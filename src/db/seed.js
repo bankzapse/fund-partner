@@ -8,6 +8,18 @@ import { recordPayment } from '../domain/payments.js';
 const RESET = process.argv.includes('--reset');
 const DEMO = process.argv.includes('--demo') || RESET;
 
+/**
+ * โหมดใช้งานจริง: สร้างเฉพาะบัญชีเจ้าของ โดยใช้รหัสผ่านที่ผู้ใช้กำหนดเอง
+ * ไม่สร้างบัญชีตัวอย่างและไม่ใช้รหัสผ่านตั้งต้นที่เปิดเผยอยู่ใน repo สาธารณะ
+ */
+const MINIMAL = process.argv.includes('--minimal') || process.env.FP_SEED_MINIMAL === '1';
+const OWNER_PASSWORD = process.env.FP_OWNER_PASSWORD || null;
+
+if (MINIMAL && !OWNER_PASSWORD) {
+  console.error('โหมด --minimal ต้องกำหนด FP_OWNER_PASSWORD ด้วย');
+  process.exit(1);
+}
+
 const TARGET = databaseUrl() ? 'Supabase (DATABASE_URL)' : pgliteDir();
 
 if (RESET) {
@@ -39,15 +51,27 @@ const DEFAULT_USERS = [
 
 export async function seedUsers() {
   const now = nowISO();
-  for (const u of DEFAULT_USERS) {
+
+  // โหมดใช้งานจริง: บัญชีเจ้าของบัญชีเดียว รหัสผ่านที่ผู้ใช้กำหนด
+  const users = MINIMAL
+    ? [{ username: 'owner', password: OWNER_PASSWORD, full_name: 'เจ้าของกิจการ', role: 'owner' }]
+    : DEFAULT_USERS.map((u) =>
+        u.role === 'owner' && OWNER_PASSWORD ? { ...u, password: OWNER_PASSWORD } : u,
+      );
+
+  for (const u of users) {
     if (await get(`SELECT id FROM users WHERE username = :u`, { u: u.username })) continue;
     await run(
       `INSERT INTO users (username, password_hash, full_name, role, is_active, created_at, updated_at)
        VALUES (:u, :h, :name, :role, 1, :now, :now)`,
       { u: u.username, h: hashPassword(u.password), name: u.full_name, role: u.role, now },
     );
-    console.log(`สร้างผู้ใช้ ${u.username} / ${u.password}`);
+    // ไม่พิมพ์รหัสผ่านออกมาถ้าเป็นรหัสที่ผู้ใช้กำหนดเอง
+    const shown = u.password === OWNER_PASSWORD ? '(รหัสผ่านที่คุณกำหนด)' : u.password;
+    console.log(`สร้างผู้ใช้ ${u.username} / ${shown}`);
   }
+
+  if (MINIMAL) return; // ไม่สร้างพนักงานตัวอย่างในโหมดใช้งานจริง
 
   // ผูกพนักงานเก็บเงินกับผู้ใช้ เพื่อให้เห็นเฉพาะลูกหนี้ที่ตนดูแล (ข้อ 12)
   const collectorUser = await get(`SELECT id FROM users WHERE username = 'collector'`);
@@ -211,5 +235,9 @@ await setSetting('company_name', 'พันธมิตรเงินทุน'
 if (DEMO) await seedDemo();
 
 console.log(`\nฐานข้อมูล: ${TARGET}`);
-console.log('เข้าสู่ระบบด้วย owner / owner1234 แล้วเปลี่ยนรหัสผ่านทันที');
+console.log(
+  MINIMAL || OWNER_PASSWORD
+    ? 'เข้าสู่ระบบด้วย owner และรหัสผ่านที่คุณกำหนดไว้'
+    : 'เข้าสู่ระบบด้วย owner / owner1234 แล้วเปลี่ยนรหัสผ่านทันที',
+);
 await closeDb();

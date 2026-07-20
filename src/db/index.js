@@ -20,6 +20,22 @@ export function isServerless() {
   return Boolean(process.env.VERCEL);
 }
 
+/**
+ * ตัดสินใจว่าต้องใช้ SSL หรือไม่
+ * ฐานข้อมูลบนคลาวด์ต้องใช้เสมอ ส่วนเครื่องตัวเองหรือที่สั่ง sslmode=disable ไว้ไม่ต้อง
+ */
+export function useSsl(url) {
+  try {
+    const u = new URL(url);
+    const mode = u.searchParams.get('sslmode');
+    if (mode === 'disable') return false;
+    if (mode) return true;
+    return !['localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0'].includes(u.hostname);
+  } catch {
+    return true; // อ่าน URL ไม่ออก ให้ปลอดภัยไว้ก่อน
+  }
+}
+
 /** ที่เก็บข้อมูลของ PGlite เมื่อรันในเครื่อง (':memory:' สำหรับเทสต์) */
 export function pgliteDir() {
   return process.env.FP_DB_PATH || join(ROOT, 'data', 'pgdata');
@@ -41,10 +57,10 @@ async function createDriver() {
 
   if (url) {
     const { default: pg } = await import('pg');
-    // Supabase ต้องเชื่อมต่อผ่าน SSL
+    // Supabase ต้องเชื่อมต่อผ่าน SSL — ปิดเฉพาะเมื่อต่อเครื่องตัวเองหรือสั่งปิดชัดเจน
     const pool = new pg.Pool({
       connectionString: url,
-      ssl: url.includes('localhost') ? false : { rejectUnauthorized: false },
+      ssl: useSsl(url) ? { rejectUnauthorized: false } : false,
       max: isServerless() ? 1 : 10,
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 10_000,

@@ -252,16 +252,23 @@ bash scripts/setup-supabase.sh
 <https://vercel.com/chao-dee/~/integrations/accept-terms/supabase?source=cli>
 (เป็นการยอมรับ EULA และ Privacy Policy ในนามทีม จึงต้องเป็นเจ้าของบัญชีกดเอง)
 
-### วิธีที่ 2 — สร้างที่ supabase.com เอง แล้วค่อยตั้งค่า
+### วิธีที่ 2 — สร้างที่ supabase.com เอง แล้วรันสคริปต์ (แนะนำถ้ามี org อยู่แล้ว)
 
-ถ้าไม่อยากผ่าน Vercel Marketplace สร้างโปรเจกต์ที่ supabase.com โดยตรง
-คัดลอก connection string แบบ **Connection pooling** (พอร์ต 6543) แล้ว
+สร้างโปรเจกต์ใน organization ของคุณเองที่ supabase.com (region Singapore) แล้ว
 
 ```bash
-npx vercel env add DATABASE_URL production      # วาง connection string
-DATABASE_URL='<connection string>' npm run seed # สร้างตาราง + ผู้ใช้
-npx vercel --prod                               # deploy ใหม่
+bash scripts/connect-supabase.sh
 ```
+
+สคริปต์จะถาม connection string, service_role key และรหัสผ่านเจ้าของ
+โดย**พิมพ์แล้วไม่ขึ้นบนจอและไม่เข้าประวัติคำสั่ง** จากนั้นทำให้ครบทุกขั้น:
+ทดสอบเชื่อมต่อ → ตั้งตัวแปรบน Vercel → สร้าง 16 ตาราง → สร้างบัญชีเจ้าของ →
+สร้าง Storage bucket → deploy → ตรวจสอบ → เขียนรายงานลง `setup-report.txt`
+
+**รายงานที่ได้ไม่มีรหัสผ่านหรือคีย์ใด ๆ** ส่งต่อให้ผู้อื่นดูได้อย่างปลอดภัย
+
+บัญชีเจ้าของถูกสร้างด้วยรหัสผ่านที่คุณกำหนดตั้งแต่แรก
+จึงไม่มีรหัสตั้งต้นที่เปิดเผยใน repo อยู่บนฐานข้อมูลจริงเลยแม้แต่วินาทีเดียว
 
 ### รายละเอียดแต่ละขั้น (ถ้าอยากทำเอง)
 

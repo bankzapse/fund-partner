@@ -1,6 +1,6 @@
 -- พันธมิตรเงินทุน :: Migration สำหรับ Supabase
--- รันไฟล์นี้ใน Supabase Dashboard > SQL Editor > New query
--- (หรือระบบจะสร้างตารางให้เองอัตโนมัติเมื่อเชื่อมต่อครั้งแรก)
+-- รันใน Supabase Dashboard > SQL Editor (หรือปล่อยให้ระบบสร้างเองตอนเชื่อมต่อครั้งแรก)
+-- ไฟล์นี้สร้างจาก src/db/schema.sql จึงตรงกันเสมอ
 
 -- พันธมิตรเงินทุน :: โครงสร้างฐานข้อมูล PostgreSQL (SRS ข้อ 13)
 -- ใช้ได้ทั้ง Supabase (production) และ PGlite (dev/test) — dialect เดียวกันทั้งหมด
@@ -263,23 +263,21 @@ CREATE TABLE IF NOT EXISTS approvals (
 
 -- ---------------------------------------------------------------------------
 -- ความปลอดภัยระดับแถว (Row Level Security)
--- แอปเชื่อมต่อด้วย service role ผ่านฝั่งเซิร์ฟเวอร์เท่านั้น และตรวจสิทธิ์เองในโค้ด
--- จึงเปิด RLS ไว้เพื่อกันการเข้าถึงตรงจากฝั่งเบราว์เซอร์ด้วย anon key
+--
+-- แอปเชื่อมต่อจากฝั่งเซิร์ฟเวอร์ในฐานะเจ้าของตาราง (ซึ่งข้าม RLS ได้) และตรวจสิทธิ์เองในโค้ด
+-- การเปิด RLS โดยไม่สร้าง policy ใด ๆ จึงเป็นการปิดประตูไม่ให้ anon key
+-- เข้าถึงข้อมูลการเงินได้โดยตรงจากฝั่งเบราว์เซอร์
+--
+-- บังคับจากตัวแอปเอง ไม่พึ่งการตั้งค่าในหน้าจอ Supabase เพื่อให้ปลอดภัยเสมอ
 -- ---------------------------------------------------------------------------
-ALTER TABLE users            ENABLE ROW LEVEL SECURITY;
-ALTER TABLE sessions         ENABLE ROW LEVEL SECURITY;
-ALTER TABLE employees        ENABLE ROW LEVEL SECURITY;
-ALTER TABLE debtors          ENABLE ROW LEVEL SECURITY;
-ALTER TABLE debtor_documents ENABLE ROW LEVEL SECURITY;
-ALTER TABLE contracts        ENABLE ROW LEVEL SECURITY;
-ALTER TABLE contract_links   ENABLE ROW LEVEL SECURITY;
-ALTER TABLE installments     ENABLE ROW LEVEL SECURITY;
-ALTER TABLE payments         ENABLE ROW LEVEL SECURITY;
-ALTER TABLE expenses         ENABLE ROW LEVEL SECURITY;
-ALTER TABLE income_entries   ENABLE ROW LEVEL SECURITY;
-ALTER TABLE daily_closings   ENABLE ROW LEVEL SECURITY;
-ALTER TABLE audit_logs       ENABLE ROW LEVEL SECURITY;
-ALTER TABLE settings         ENABLE ROW LEVEL SECURITY;
-ALTER TABLE counters         ENABLE ROW LEVEL SECURITY;
-ALTER TABLE approvals        ENABLE ROW LEVEL SECURITY;
--- ไม่สร้าง policy ใด ๆ = anon key เข้าไม่ได้เลย, service role ข้าม RLS ได้ตามปกติ
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+    'users','sessions','employees','debtors','debtor_documents','contracts',
+    'contract_links','installments','payments','expenses','income_entries',
+    'daily_closings','audit_logs','settings','counters','approvals'
+  ] LOOP
+    EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+  END LOOP;
+END $$;

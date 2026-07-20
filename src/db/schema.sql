@@ -256,3 +256,24 @@ CREATE TABLE IF NOT EXISTS approvals (
   decided_at    TEXT,
   decision_note TEXT
 );
+
+-- ---------------------------------------------------------------------------
+-- ความปลอดภัยระดับแถว (Row Level Security)
+--
+-- แอปเชื่อมต่อจากฝั่งเซิร์ฟเวอร์ในฐานะเจ้าของตาราง (ซึ่งข้าม RLS ได้) และตรวจสิทธิ์เองในโค้ด
+-- การเปิด RLS โดยไม่สร้าง policy ใด ๆ จึงเป็นการปิดประตูไม่ให้ anon key
+-- เข้าถึงข้อมูลการเงินได้โดยตรงจากฝั่งเบราว์เซอร์
+--
+-- บังคับจากตัวแอปเอง ไม่พึ่งการตั้งค่าในหน้าจอ Supabase เพื่อให้ปลอดภัยเสมอ
+-- ---------------------------------------------------------------------------
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+    'users','sessions','employees','debtors','debtor_documents','contracts',
+    'contract_links','installments','payments','expenses','income_entries',
+    'daily_closings','audit_logs','settings','counters','approvals'
+  ] LOOP
+    EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+  END LOOP;
+END $$;
