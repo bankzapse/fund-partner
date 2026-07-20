@@ -101,6 +101,13 @@ export async function seedDemo() {
     { d: addDays(today(), -60), uid: owner.id, now },
   );
 
+  // เดินตัวนับรหัสลูกหนี้ให้ตรงกับข้อมูลตัวอย่างที่เพิ่งใส่ไป
+  await run(
+    `INSERT INTO counters (name, value) VALUES ('debtor', :v)
+     ON CONFLICT (name) DO UPDATE SET value = GREATEST(counters.value, :v)`,
+    { v: people.length },
+  );
+
   const collectorUser = await get(`SELECT * FROM users WHERE username = 'collector'`);
 
   const start = addDays(today(), -10);

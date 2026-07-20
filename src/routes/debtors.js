@@ -16,6 +16,18 @@ import {
 
 const router = Router();
 
+/**
+ * ออกรหัสลูกหนี้อัตโนมัติ โดยข้ามเลขที่ถูกใช้ไปแล้ว
+ * (ผู้ใช้กรอกรหัสเองได้ ตัวนับจึงอาจตามหลังความจริง)
+ */
+async function nextFreeDebtorCode() {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const code = `D${String(await nextCounter('debtor')).padStart(5, '0')}`;
+    if (!(await get(`SELECT id FROM debtors WHERE code = :c`, { c: code }))) return code;
+  }
+  throw Object.assign(new Error('ออกรหัสลูกหนี้อัตโนมัติไม่สำเร็จ กรุณาระบุรหัสเอง'), { status: 500 });
+}
+
 /** ค้นหาลูกหนี้จากชื่อ เบอร์โทร รหัสลูกหนี้ และเลขที่สัญญา (SRS ข้อ 6) */
 router.get(
   '/',
@@ -121,7 +133,7 @@ router.post(
     if (!b.full_name?.trim()) return res.status(400).json({ error: 'ต้องระบุชื่อ-นามสกุล' });
 
     const debtor = await tx(async () => {
-      const code = b.code?.trim() || `D${String(await nextCounter('debtor')).padStart(5, '0')}`;
+      const code = b.code?.trim() || (await nextFreeDebtorCode());
       if (await get(`SELECT id FROM debtors WHERE code = :c`, { c: code })) {
         throw Object.assign(new Error('รหัสลูกหนี้นี้ถูกใช้แล้ว'), { status: 400 });
       }
