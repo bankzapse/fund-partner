@@ -117,7 +117,8 @@ if [[ "$DB_URL" != *:6543* ]]; then
 fi
 
 # Dedicated pooler เป็น IPv6 ซึ่ง Vercel ต่อไม่ถึง ต้องใช้ Shared pooler ที่เป็น IPv4
-if [[ "$DB_URL" == *"db."*".supabase.co"* ]]; then
+# ข้ามด่านนี้ได้ด้วย ALLOW_DEDICATED_POOLER=1 ถ้าเปิด IPv4 add-on ไว้แล้ว
+if [[ "$DB_URL" == *"db."*".supabase.co"* ]] && [ "${ALLOW_DEDICATED_POOLER:-}" != "1" ]; then
   cat >&2 <<'MSG'
 
   ✗ นี่คือ Dedicated pooler (host เป็น db.xxx.supabase.co) ซึ่งใช้ IPv6
@@ -126,6 +127,9 @@ if [[ "$DB_URL" == *"db."*".supabase.co"* ]]; then
     กลับไปที่หน้า Connect แล้วสลับเป็น "Shared pooler"
     ของที่ถูกต้อง host จะเป็น  aws-0-<region>.pooler.supabase.com
     และ user จะเป็น            postgres.<project-ref>
+
+    ถ้าเปิด IPv4 add-on ไว้แล้วและต้องการใช้ dedicated pooler จริง ๆ:
+        ALLOW_DEDICATED_POOLER=1 bash scripts/connect-supabase.sh
 
 MSG
   exit 1
@@ -190,10 +194,12 @@ import('pg').then(async ({ default: pg }) => {
     connectionTimeoutMillis: 15000,
   });
   const r = await pool.query('SELECT current_database() db, version() v');
-  console.log('  \x1b[32m✓\x1b[0m ต่อได้: ' + r.rows[0].db + ' | ' + r.rows[0].v.split(',')[0]);
+  console.log('  \x1b[32m✓\x1b[0m ต่อได้จากเครื่องนี้: ' + r.rows[0].db + ' | ' + r.rows[0].v.split(',')[0]);
   await pool.end();
 }).catch((e) => { console.error('  เชื่อมต่อไม่สำเร็จ: ' + e.message); process.exit(1); });
-" || die "เชื่อมต่อฐานข้อมูลไม่ได้ — ตรวจรหัสผ่านและว่าเลือกแบบ Connection pooling แล้ว"
+" || die "เชื่อมต่อฐานข้อมูลไม่ได้ — ตรวจรหัสผ่านและว่าเลือกแบบ Transaction pooler แล้ว"
+# เครื่องคุณอาจมี IPv6 แต่ Vercel ไม่มี การตรวจขั้นสุดท้ายจึงเป็นตัวชี้ขาดจริง
+warn "ผ่านจากเครื่องนี้แล้ว — ตัวชี้ขาดคือการตรวจ /api/auth/session ตอนท้าย ซึ่งยิงจาก Vercel จริง"
 
 # ----------------------------------------------------- 3. ตั้งค่าตัวแปร Vercel
 say "ตั้งค่าตัวแปรบน Vercel"
