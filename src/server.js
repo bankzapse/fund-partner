@@ -87,15 +87,20 @@ export async function createApp() {
 
   app.use('/uploads', express.static(UPLOAD_DIR));
 
-  // หน้าแนะนำระบบสำหรับ SEO — เป็น HTML สมบูรณ์ ไม่ต้องรอ JavaScript
-  app.get('/welcome', (_req, res) => res.sendFile(join(PUBLIC_DIR, 'welcome.html')));
+  // ที่อยู่เดิมของหน้าแนะนำ — ส่งต่อถาวรมาที่หน้าแรก กันเนื้อหาซ้ำสองที่
+  app.get('/welcome', (_req, res) => res.redirect(301, '/'));
 
+  // public/index.html คือหน้าแนะนำระบบ (SEO) จึงถูกเสิร์ฟที่ / โดยอัตโนมัติ
+  // ไม่ต้อง redirect ทำให้ Google เก็บหน้าแรกของโดเมนได้ตรง ๆ
   app.use(express.static(PUBLIC_DIR));
 
-  // SPA fallback
-  app.get(/^(?!\/api\/).*/, (_req, res) => {
-    res.sendFile(join(PUBLIC_DIR, 'index.html'));
+  // ตัวระบบอยู่ใต้ /app ทั้งหมด (ภายในใช้ hash routing เช่น /app#/debtors)
+  app.get(/^\/app(\/.*)?$/, (_req, res) => {
+    res.sendFile(join(PUBLIC_DIR, 'app.html'));
   });
+
+  // เส้นทางอื่นที่ไม่รู้จัก ส่งกลับหน้าแรก
+  app.get(/^(?!\/api\/).*/, (_req, res) => res.redirect(302, '/'));
 
   // ตัวจัดการข้อผิดพลาดกลาง — ส่งข้อความภาษาไทยกลับให้ผู้ใช้
   app.use((err, _req, res, _next) => {

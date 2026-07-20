@@ -1,8 +1,8 @@
 User-agent: *
-Allow: /welcome
-Allow: /manifest.webmanifest
+Allow: /
 
-# หน้าใช้งานจริงต้องเข้าสู่ระบบ ไม่ต้องให้ Search Engine เก็บ
+# ตัวระบบต้องเข้าสู่ระบบก่อน ไม่ต้องให้ Search Engine เก็บ
+Disallow: /app
 Disallow: /api/
 Disallow: /uploads/
 

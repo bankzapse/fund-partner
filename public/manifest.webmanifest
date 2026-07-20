@@ -2,7 +2,7 @@
   "name": "พันธมิตรเงินทุน",
   "short_name": "เงินทุน",
   "description": "ระบบบริหารลูกหนี้ สัญญา รับชำระ รียอด และรายงาน",
-  "start_url": "/",
+  "start_url": "/app",
   "display": "standalone",
   "background_color": "#0f2f4f",
   "theme_color": "#0f2f4f",

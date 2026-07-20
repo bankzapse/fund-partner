@@ -100,7 +100,7 @@ unset PW1 PW2
 ok "เรียบร้อย"
 cat <<MSG
 
-  เข้าสู่ระบบได้ที่ https://fund-partner.vercel.app
+  เข้าสู่ระบบได้ที่ https://fund-partner.vercel.app/app
   ชื่อผู้ใช้: $USERNAME
 
   หมายเหตุ: session เดิมทั้งหมดถูกยกเลิกแล้ว อุปกรณ์อื่นต้องเข้าสู่ระบบใหม่
