@@ -9,6 +9,7 @@ import { renderCashbook } from './pages/cashbook.js';
 import { renderReports } from './pages/reports.js';
 import { renderEmployees } from './pages/employees.js';
 import { renderSettings } from './pages/settings.js';
+import { renderImport } from './pages/import.js';
 
 const app = document.getElementById('app');
 
@@ -22,6 +23,7 @@ const MENU = [
   { path: '/cashbook', icon: '🧾', label: 'รายรับ-รายจ่าย', cap: 'cashbook', render: renderCashbook },
   { path: '/reports', icon: '📈', label: 'รายงาน', cap: 'reports_view', render: renderReports },
   { path: '/employees', icon: '🧑‍💼', label: 'พนักงาน', cap: 'employees_manage', render: renderEmployees },
+  { path: '/import', icon: '📥', label: 'นำเข้าข้อมูล', cap: 'settings_manage', render: renderImport },
   { path: '/settings', icon: '⚙️', label: 'ตั้งค่า', cap: 'settings_manage', render: renderSettings },
 ];
 

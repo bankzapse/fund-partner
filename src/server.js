@@ -17,6 +17,7 @@ import cashbookRoutes from './routes/cashbook.js';
 import reportRoutes from './routes/reports.js';
 import adminRoutes from './routes/admin.js';
 import dashboardRoutes from './routes/dashboard.js';
+import importRoutes from './routes/import.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -82,6 +83,7 @@ export async function createApp() {
   app.use('/api/cashbook', cashbookRoutes);
   app.use('/api/reports', reportRoutes);
   app.use('/api/admin', adminRoutes);
+  app.use('/api/import', importRoutes);
 
   app.use('/uploads', express.static(UPLOAD_DIR));
 
