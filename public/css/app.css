@@ -42,7 +42,7 @@ html, body {
   font-family: 'Sarabun', 'Noto Sans Thai', 'IBM Plex Sans Thai', -apple-system,
     BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 16px;
-  line-height: 1.6;
+  line-height: 1.65;
   -webkit-text-size-adjust: 100%;
   -webkit-font-smoothing: antialiased;
 }
@@ -60,7 +60,7 @@ html, body {
   background: var(--navy); color: #fff;
 }
 .topbar h1 {
-  font-size: 1rem; margin: 0; font-weight: 700; letter-spacing: -0.01em;
+  font-size: 1rem; margin: 0; font-weight: 700;
   display: flex; align-items: center; gap: 0.55rem;
 }
 .topbar h1::before {
@@ -140,11 +140,13 @@ main {
   gap: 1rem; margin-bottom: 1.1rem; flex-wrap: wrap;
 }
 .page-head h2 {
-  margin: 0; font-size: 1.35rem; font-weight: 700; letter-spacing: -0.015em;
+  margin: 0; font-size: 1.35rem; font-weight: 700; line-height: 1.45;
 }
 .page-head .sub { color: var(--slate); font-size: 0.86rem; margin-top: 0.15rem; }
 
-h3 { letter-spacing: -0.01em; }
+/* ภาษาไทยมีสระบน-ล่างและวรรณยุกต์ จึงต้องการระยะบรรทัดมากกว่าอังกฤษ
+   และห้ามบีบระยะตัวอักษร เพราะจะทำให้วรรณยุกต์ทับกัน */
+h3 { line-height: 1.5; }
 
 /* ---------- การ์ด ---------- */
 
@@ -157,7 +159,11 @@ h3 { letter-spacing: -0.01em; }
   margin: 0 0 0.9rem; font-size: 0.98rem; font-weight: 700;
   display: flex; align-items: center; justify-content: space-between; gap: 0.6rem;
 }
-.card .hint { color: var(--slate); font-size: 0.82rem; margin: -0.5rem 0 0.9rem; }
+/* คำอธิบายใต้หัวข้อการ์ด — ดึงชิดหัวข้อเฉพาะเมื่อตามหลังหัวข้อโดยตรง
+   ถ้าใช้ที่อื่น (เช่น ใต้ตารางตัวเลข) ต้องใช้ระยะปกติ ไม่งั้นข้อความจะทับกัน */
+.hint { color: var(--slate); font-size: 0.83rem; line-height: 1.6; margin: 0 0 0.9rem; }
+.card > h3 + .hint { margin-top: -0.55rem; }
+.hint.mt { margin-top: 0.85rem; }
 
 .grid { display: grid; gap: 0.7rem; }
 .grid.k2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -174,19 +180,25 @@ h3 { letter-spacing: -0.01em; }
   background: var(--card); border: 1px solid var(--line);
   border-radius: var(--r); padding: 0.85rem 0.95rem;
   box-shadow: var(--shadow-1);
-  transition: box-shadow 0.16s, transform 0.16s;
+  transition: box-shadow 0.16s;
+  display: flex; flex-direction: column;   /* ป้ายยาวไม่เท่ากันก็ยังเรียงตัวเลขตรงกัน */
+  min-width: 0;
 }
 .stat:hover { box-shadow: var(--shadow-2); }
 .stat .label {
-  font-size: 0.74rem; color: var(--slate); font-weight: 500;
-  letter-spacing: 0.01em; margin-bottom: 0.15rem;
+  font-size: 0.76rem; color: var(--slate); font-weight: 500;
+  line-height: 1.5; margin-bottom: 0.2rem;
 }
+/* ตัวเลขไหลตามป้ายตามปกติ ส่วนข้อความเสริมถูกดันไปติดขอบล่างเสมอ
+   ทำให้การ์ดที่มีและไม่มีข้อความเสริม ยังวางตัวเลขอยู่ในแนวเดียวกัน */
+.stat .foot { margin-top: auto; padding-top: 0.3rem; }
 .stat .value {
-  font-size: 1.4rem; font-weight: 700; letter-spacing: -0.025em;
-  font-variant-numeric: tabular-nums; line-height: 1.25;
+  font-size: 1.38rem; font-weight: 700;
+  font-variant-numeric: tabular-nums; line-height: 1.35;
+  letter-spacing: -0.015em;   /* ใช้กับตัวเลขเท่านั้น ช่วยให้ยอดเงินอ่านง่ายขึ้น */
 }
 .stat .value.sm { font-size: 1.12rem; }
-.stat .foot { font-size: 0.71rem; color: var(--slate-2); margin-top: 0.2rem; }
+.stat .foot { font-size: 0.73rem; color: var(--slate-2); line-height: 1.5; }
 .stat.pos .value { color: var(--green); }
 .stat.neg .value { color: var(--red); }
 .stat.gold { background: var(--gold-soft); border-color: #f2e2c4; }
@@ -202,8 +214,8 @@ h3 { letter-spacing: -0.01em; }
   overflow-x: auto; -webkit-overflow-scrolling: touch;
   border-radius: var(--r); border: 1px solid var(--line-2);
 }
-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-th, td { text-align: left; padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--line-2); }
+table { width: 100%; border-collapse: collapse; font-size: 0.875rem; line-height: 1.55; }
+th, td { text-align: left; padding: 0.65rem 0.75rem; border-bottom: 1px solid var(--line-2); vertical-align: top; }
 th {
   font-size: 0.72rem; color: var(--slate); font-weight: 600;
   white-space: nowrap; background: #fafbfd;
@@ -289,8 +301,8 @@ input[type='file'] { padding: 0.45rem; font-size: 0.85rem; }
 
 .kv { display: flex; justify-content: space-between; gap: 1rem; padding: 0.4rem 0; font-size: 0.9rem; }
 .kv + .kv { border-top: 1px solid var(--line-2); }
-.kv .k { color: var(--slate); }
-.kv .v { font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+.kv .k { color: var(--slate); line-height: 1.55; }
+.kv .v { font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
 .kv.total {
   border-top: 2px solid var(--navy); margin-top: 0.35rem;
   padding-top: 0.6rem; font-size: 1rem;
@@ -410,7 +422,7 @@ input[type='file'] { padding: 0.45rem; font-size: 0.85rem; }
 }
 .login-card h1 {
   margin: 0 0 0.15rem; font-size: 1.4rem; color: var(--navy);
-  font-weight: 800; letter-spacing: -0.02em;
+  font-weight: 800;
   display: flex; align-items: center; gap: 0.55rem;
 }
 .login-card h1::before {
@@ -425,6 +437,10 @@ input[type='file'] { padding: 0.45rem; font-size: 0.85rem; }
 
 .rowline { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
 .muted { color: var(--slate); }
+
+/* ชื่อลูกหนี้หรือหมายเหตุที่ยาวมาก ต้องตัดคำได้ ไม่ดันตารางจนล้นจอ */
+td, .stat .value, .kv .v { overflow-wrap: anywhere; }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .small { font-size: 0.8rem; }
 .nowrap { white-space: nowrap; }
 .mono { font-variant-numeric: tabular-nums; }
