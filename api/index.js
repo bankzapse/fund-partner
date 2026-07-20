@@ -16,6 +16,14 @@ export default async function handler(req, res) {
       throw err;
     });
   }
-  const app = await appPromise;
+  let app;
+  try {
+    app = await appPromise;
+  } catch (err) {
+    // ตอบกลับให้อ่านรู้เรื่อง แทนที่จะเป็นหน้าขาวหรือ 500 เปล่า ๆ
+    res.statusCode = 503;
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    return res.end(JSON.stringify({ error: err.message }, null, 2));
+  }
   return app(req, res);
 }

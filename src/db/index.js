@@ -30,6 +30,15 @@ let _ready = null;
 async function createDriver() {
   const url = databaseUrl();
 
+  // บน Serverless ระบบไฟล์เป็นแบบชั่วคราวและหายทุก request
+  // ถ้าปล่อยให้ใช้ PGlite ต่อ ข้อมูลการเงินจะหายโดยไม่มีสัญญาณเตือน จึงต้องหยุดทันที
+  if (!url && isServerless()) {
+    throw new Error(
+      'ยังไม่ได้ตั้งค่า DATABASE_URL — ระบบต้องเชื่อมต่อฐานข้อมูล PostgreSQL (Supabase) ก่อนใช้งานบน Vercel ' +
+        'ตั้งค่าได้ที่ Vercel > Project > Settings > Environment Variables',
+    );
+  }
+
   if (url) {
     const { default: pg } = await import('pg');
     // Supabase ต้องเชื่อมต่อผ่าน SSL
