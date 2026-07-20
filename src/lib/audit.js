@@ -5,8 +5,8 @@ import { nowISO } from './time.js';
  * บันทึก Audit Log ทุกการสร้าง แก้ไข ยกเลิก และอนุมัติ (SRS ข้อ 15)
  * เก็บค่าเดิม ค่าใหม่ เหตุผล และผู้ทำรายการ
  */
-export function audit({ userId, action, entity, entityId, before, after, reason, ip }) {
-  run(
+export async function audit({ userId, action, entity, entityId, before, after, reason, ip }) {
+  await run(
     `INSERT INTO audit_logs (user_id, action, entity, entity_id, before_json, after_json, reason, ip, created_at)
      VALUES (:uid, :action, :entity, :eid, :before, :after, :reason, :ip, :now)`,
     {
@@ -23,9 +23,9 @@ export function audit({ userId, action, entity, entityId, before, after, reason,
   );
 }
 
-export function auditTrail({ entity, entityId, limit = 200 }) {
+export async function auditTrail({ entity, entityId, limit = 200 }) {
   if (entity && entityId) {
-    return all(
+    return await all(
       `SELECT a.*, u.full_name AS user_name FROM audit_logs a
        LEFT JOIN users u ON u.id = a.user_id
        WHERE a.entity = :entity AND a.entity_id = :eid
@@ -33,7 +33,7 @@ export function auditTrail({ entity, entityId, limit = 200 }) {
       { entity, eid: String(entityId), limit },
     );
   }
-  return all(
+  return await all(
     `SELECT a.*, u.full_name AS user_name FROM audit_logs a
      LEFT JOIN users u ON u.id = a.user_id
      ORDER BY a.id DESC LIMIT :limit`,

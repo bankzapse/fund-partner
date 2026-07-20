@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { all, get, run } from '../db/index.js';
+import { all, get, run, insert } from '../db/index.js';
 import {
   previewContract,
   createContract,
@@ -25,11 +25,11 @@ router.get('/types', (_req, res) => res.json({ types: CONTRACT_TYPES }));
 router.get(
   '/',
   need('debtors_view'),
-  wrap((req, res) => {
-    const scope = scopeEmployeeId(req.ctx.user);
+  wrap(async (req, res) => {
+    const scope = await scopeEmployeeId(req.ctx.user);
     const q = String(req.query.q ?? '').trim();
     const status = req.query.status ? String(req.query.status) : null;
-    const rows = all(
+    const rows = await all(
       `SELECT c.*, d.full_name AS debtor_name, d.code AS debtor_code, d.phone AS debtor_phone,
               e.full_name AS employee_name
        FROM contracts c
@@ -50,17 +50,17 @@ router.get(
 router.post(
   '/preview',
   need('contracts_create'),
-  wrap((req, res) => {
-    res.json({ preview: previewContract(mapContractBody(req.body)) });
+  wrap(async (req, res) => {
+    res.json({ preview: await previewContract(mapContractBody(req.body)) });
   }),
 );
 
 router.post(
   '/',
   need('contracts_create'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const body = mapContractBody(req.body);
-    const result = createContract(body, req.ctx);
+    const result = await createContract(body, req.ctx);
     res.status(201).json({
       contract: result.contract,
       preview: result.preview,
@@ -72,19 +72,19 @@ router.post(
 router.get(
   '/:id',
   need('debtors_view'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const id = intParam(req.params.id);
-    const contract = getContract(id);
+    const contract = await getContract(id);
     if (!contract) return res.status(404).json({ error: 'ไม่พบสัญญา' });
-    assertDebtorAccess(req.ctx.user, contract.debtor_id);
+    await assertDebtorAccess(req.ctx.user, contract.debtor_id);
     res.json({
       contract,
-      summary: contractSummary(id),
-      behaviour: contractBehaviour(id),
-      installments: listInstallments(id),
-      payments: listPayments({ contractId: id, includeVoid: true, limit: 500 }),
-      chain: contractChain(id),
-      audit: auditTrail({ entity: 'contract', entityId: id, limit: 50 }),
+      summary: await contractSummary(id),
+      behaviour: await contractBehaviour(id),
+      installments: await listInstallments(id),
+      payments: await listPayments({ contractId: id, includeVoid: true, limit: 500 }),
+      chain: await contractChain(id),
+      audit: await auditTrail({ entity: 'contract', entityId: id, limit: 50 }),
     });
   }),
 );
@@ -93,12 +93,12 @@ router.get(
 router.get(
   '/:id/schedule.csv',
   need('debtors_view'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const id = intParam(req.params.id);
-    const contract = getContract(id);
+    const contract = await getContract(id);
     if (!contract) return res.status(404).json({ error: 'ไม่พบสัญญา' });
-    assertDebtorAccess(req.ctx.user, contract.debtor_id);
-    sendCsv(res, `schedule-${contract.contract_no}.csv`, listInstallments(id), [
+    await assertDebtorAccess(req.ctx.user, contract.debtor_id);
+    sendCsv(res, `schedule-${contract.contract_no}.csv`, await listInstallments(id), [
       { label: 'งวดที่', key: 'seq' },
       { label: 'วันครบกำหนด', key: 'due_date' },
       { label: 'ยอดที่ควรจ่าย', value: (r) => (r.due_amount / 100).toFixed(2) },
@@ -116,27 +116,25 @@ router.get(
 router.post(
   '/reyod/preview',
   need('reyod'),
-  wrap((req, res) => {
-    res.json({ preview: reyodPreview(mapReyodBody(req.body)) });
+  wrap(async (req, res) => {
+    res.json({ preview: await reyodPreview(mapReyodBody(req.body)) });
   }),
 );
 
 router.post(
   '/reyod',
   need('reyod'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const body = mapReyodBody(req.body);
     // ผู้จัดการ: ทำได้แต่ต้องรออนุมัติจากเจ้าของ (ตารางสิทธิ์ ข้อ 12)
     if (needsApproval(req.ctx.user, 'reyod')) {
-      const info = run(
+      const approvalId = await insert(
         `INSERT INTO approvals (kind, payload, requested_by, requested_at)
          VALUES ('reyod', :payload, :uid, :now)`,
         { payload: JSON.stringify(body), uid: req.ctx.user.id, now: nowISO() },
       );
-      const approval = get(`SELECT * FROM approvals WHERE id = :id`, {
-        id: Number(info.lastInsertRowid),
-      });
-      audit({
+      const approval = await get(`SELECT * FROM approvals WHERE id = :id`, { id: approvalId });
+      await audit({
         userId: req.ctx.user.id,
         action: 'request_approval',
         entity: 'approval',
@@ -146,7 +144,7 @@ router.post(
       });
       return res.status(202).json({ pending_approval: approval });
     }
-    res.status(201).json(reyod(body, req.ctx));
+    res.status(201).json(await reyod(body, req.ctx));
   }),
 );
 

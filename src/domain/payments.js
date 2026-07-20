@@ -1,4 +1,4 @@
-import { all, get, run, tx, nextCounter } from '../db/index.js';
+import { all, get, run, insert, tx, nextCounter } from '../db/index.js';
 import { assertNonNegative } from '../lib/money.js';
 import { today, nowISO, isDateStr } from '../lib/time.js';
 import { audit } from '../lib/audit.js';
@@ -11,9 +11,9 @@ export class PaymentError extends Error {
 }
 
 /** เลขที่ใบรับเงิน: RC-YYYYMMDD-#### (ไม่ซ้ำ — ข้อ 14) */
-function newReceiptNo(dateStr) {
+async function newReceiptNo(dateStr) {
   const ymd = dateStr.replaceAll('-', '');
-  const n = nextCounter(`receipt:${ymd}`);
+  const n = await nextCounter(`receipt:${ymd}`);
   return `RC-${ymd}-${String(n).padStart(4, '0')}`;
 }
 
@@ -63,7 +63,7 @@ export function allocatePayment({
     }
   }
 
-  // 3) จ่ายเกินตารางงวด -> ตัดเงินต้นคงเหลือโดยตรง (เช่น ปิดสัญญาก่อนกำหนด / ดอกลอยชำระต้น)
+  // 3) จ่ายเกินตารางงวด -> ตัดเงินต้นคงเหลือโดยตรง (ปิดสัญญาก่อนกำหนด / ดอกลอยชำระต้น)
   if (left > 0 && principalCap > 0) {
     const extra = Math.min(left, principalCap);
     left -= extra;
@@ -98,8 +98,8 @@ function installmentStatus(inst) {
   return 'pending';
 }
 
-function openInstallments(contractId) {
-  return all(
+async function openInstallments(contractId) {
+  return await all(
     `SELECT * FROM installments
      WHERE contract_id = :cid AND (interest_paid < interest_due OR principal_paid < principal_due)
      ORDER BY seq`,
@@ -111,12 +111,12 @@ function openInstallments(contractId) {
  * บันทึกการรับชำระ (SRS ข้อ 8) — ทั้งหมดอยู่ใน transaction เดียว
  * บันทึกตามยอดที่ลูกค้าจ่ายจริง ไม่บังคับให้จ่ายเต็มงวด
  */
-export function recordPayment(input, ctx) {
-  return tx(() => recordPaymentInTx(input, ctx));
+export async function recordPayment(input, ctx) {
+  return await tx(() => recordPaymentInTx(input, ctx));
 }
 
-export function recordPaymentInTx(input, ctx) {
-  const contract = get(`SELECT * FROM contracts WHERE id = :id`, { id: input.contractId });
+export async function recordPaymentInTx(input, ctx) {
+  const contract = await get(`SELECT * FROM contracts WHERE id = :id`, { id: input.contractId });
   if (!contract) throw new PaymentError('ไม่พบสัญญา');
 
   // ข้อ 14: สัญญาที่ปิดหรือรียอดแล้วห้ามรับชำระเพิ่ม เว้นแต่เจ้าของอนุมัติ
@@ -133,7 +133,7 @@ export function recordPaymentInTx(input, ctx) {
   if (!isDateStr(paidDate)) throw new PaymentError('วันที่รับเงินไม่ถูกต้อง');
 
   // ข้อ 14: รายการที่ปิดยอดประจำวันแล้ว การแก้ไขต้องผ่านเจ้าของ
-  const closing = get(`SELECT * FROM daily_closings WHERE closing_date = :d`, { d: paidDate });
+  const closing = await get(`SELECT * FROM daily_closings WHERE closing_date = :d`, { d: paidDate });
   if (closing && !(ctx?.user?.role === 'owner' && input.ownerOverride === true)) {
     throw new PaymentError(
       `วันที่ ${paidDate} ปิดยอดประจำวันแล้ว การบันทึกย้อนหลังต้องได้รับอนุมัติจากเจ้าของ`,
@@ -141,7 +141,7 @@ export function recordPaymentInTx(input, ctx) {
   }
 
   const amountPaid = assertNonNegative(input.amountPaid, 'ยอดจ่ายจริง'); // ข้อ 14: ห้ามรับยอดติดลบ
-  const open = openInstallments(contract.id);
+  const open = await openInstallments(contract.id);
   const current = open[0] ?? null;
   const dueRemaining = current
     ? current.due_amount - current.interest_paid - current.principal_paid
@@ -161,9 +161,9 @@ export function recordPaymentInTx(input, ctx) {
 
   const status = classifyPayment({ amountPaid, dueRemaining, interestTotal, principalTotal });
   const now = nowISO();
-  const receiptNo = newReceiptNo(paidDate);
+  const receiptNo = await newReceiptNo(paidDate);
 
-  const info = run(
+  const paymentId = await insert(
     `INSERT INTO payments
        (receipt_no, contract_id, debtor_id, paid_date, recorded_at, received_by,
         due_amount, amount_paid, interest_amount, principal_amount, status, source,
@@ -189,14 +189,13 @@ export function recordPaymentInTx(input, ctx) {
       alloc: JSON.stringify(allocations),
     },
   );
-  const paymentId = Number(info.lastInsertRowid);
 
-  applyAllocations(allocations, +1);
-  updatePrincipal(contract.id, -principalTotal);
-  refreshContractStatus(contract.id);
+  await applyAllocations(allocations, +1);
+  await updatePrincipal(contract.id, -principalTotal);
+  await refreshContractStatus(contract.id);
 
-  const payment = getPayment(paymentId);
-  audit({
+  const payment = await getPayment(paymentId);
+  await audit({
     userId: ctx?.user?.id,
     action: 'create',
     entity: 'payment',
@@ -210,14 +209,14 @@ export function recordPaymentInTx(input, ctx) {
 }
 
 /** งวดแรกที่หัก ณ วันทำสัญญา (ข้อ 7.2 / ข้อ 14) */
-export function recordFirstInstallment({ contractId, ctx }) {
-  const contract = get(`SELECT * FROM contracts WHERE id = :id`, { id: contractId });
-  const first = get(
+export async function recordFirstInstallment({ contractId, ctx }) {
+  const contract = await get(`SELECT * FROM contracts WHERE id = :id`, { id: contractId });
+  const first = await get(
     `SELECT * FROM installments WHERE contract_id = :cid AND seq = 1`,
     { cid: contractId },
   );
   if (!first) return null;
-  return recordPaymentInTx(
+  return await recordPaymentInTx(
     {
       contractId,
       amountPaid: first.due_amount,
@@ -230,47 +229,47 @@ export function recordFirstInstallment({ contractId, ctx }) {
   );
 }
 
-function applyAllocations(allocations, sign) {
+async function applyAllocations(allocations, sign) {
   for (const a of allocations) {
     if (!a.installment_id) continue;
-    run(
+    const inst = await get(
       `UPDATE installments
          SET interest_paid = interest_paid + :i, principal_paid = principal_paid + :p
-       WHERE id = :id`,
+       WHERE id = :id
+       RETURNING *`,
       { id: a.installment_id, i: sign * a.interest, p: sign * a.principal },
     );
-    const inst = get(`SELECT * FROM installments WHERE id = :id`, { id: a.installment_id });
-    run(`UPDATE installments SET status = :s WHERE id = :id`, {
+    await run(`UPDATE installments SET status = :s WHERE id = :id`, {
       id: inst.id,
       s: installmentStatus(inst),
     });
   }
 }
 
-function updatePrincipal(contractId, delta) {
-  run(
+async function updatePrincipal(contractId, delta) {
+  const c = await get(
     `UPDATE contracts SET principal_remaining = principal_remaining + :d, updated_at = :now
-     WHERE id = :id`,
+     WHERE id = :id
+     RETURNING principal_remaining`,
     { id: contractId, d: delta, now: nowISO() },
   );
-  const c = get(`SELECT principal_remaining FROM contracts WHERE id = :id`, { id: contractId });
-  // ข้อ 14: เงินต้นคงเหลือต้องไม่ต่ำกว่า 0
+  // ข้อ 14: เงินต้นคงเหลือต้องไม่ต่ำกว่า 0 (ฐานข้อมูลมี CHECK ซ้ำอีกชั้น)
   if (c.principal_remaining < 0) throw new PaymentError('เงินต้นคงเหลือติดลบ — ยกเลิกรายการ');
 }
 
 /** ปิดสัญญาอัตโนมัติเมื่อชำระครบทุกงวดและเงินต้นเป็นศูนย์ */
-function refreshContractStatus(contractId) {
-  const c = get(`SELECT * FROM contracts WHERE id = :id`, { id: contractId });
+async function refreshContractStatus(contractId) {
+  const c = await get(`SELECT * FROM contracts WHERE id = :id`, { id: contractId });
   if (c.status === 'closed_reyod' || c.status === 'cancelled') return;
-  const openCount = get(
+  const openRow = await get(
     `SELECT COUNT(*) AS n FROM installments
      WHERE contract_id = :cid AND (interest_paid < interest_due OR principal_paid < principal_due)`,
     { cid: contractId },
-  ).n;
-  const done = openCount === 0 && c.principal_remaining === 0;
+  );
+  const done = Number(openRow.n) === 0 && c.principal_remaining === 0;
   const nextStatus = done ? 'completed' : 'active';
   if (nextStatus !== c.status) {
-    run(
+    await run(
       `UPDATE contracts SET status = :s, closed_at = :closed, updated_at = :now WHERE id = :id`,
       {
         id: contractId,
@@ -286,14 +285,14 @@ function refreshContractStatus(contractId) {
  * ยกเลิกรายการรับเงิน (ข้อ 14/15)
  * ไม่ลบถาวร — ย้อนยอดกลับ เปลี่ยนสถานะเป็นยกเลิก และเก็บผู้ยกเลิก/เหตุผลไว้
  */
-export function voidPayment({ paymentId, reason }, ctx) {
-  return tx(() => {
-    const payment = get(`SELECT * FROM payments WHERE id = :id`, { id: paymentId });
+export async function voidPayment({ paymentId, reason }, ctx) {
+  return await tx(async () => {
+    const payment = await get(`SELECT * FROM payments WHERE id = :id`, { id: paymentId });
     if (!payment) throw new PaymentError('ไม่พบรายการรับเงิน');
     if (payment.is_void) throw new PaymentError('รายการนี้ถูกยกเลิกไปแล้ว');
     if (!reason || !String(reason).trim()) throw new PaymentError('ต้องระบุเหตุผลการยกเลิก');
 
-    const closing = get(`SELECT * FROM daily_closings WHERE closing_date = :d`, {
+    const closing = await get(`SELECT * FROM daily_closings WHERE closing_date = :d`, {
       d: payment.paid_date,
     });
     if (closing && ctx?.user?.role !== 'owner') {
@@ -301,35 +300,36 @@ export function voidPayment({ paymentId, reason }, ctx) {
     }
 
     const allocations = JSON.parse(payment.allocations || '[]');
-    applyAllocations(allocations, -1);
-    updatePrincipal(payment.contract_id, +payment.principal_amount);
+    await applyAllocations(allocations, -1);
+    await updatePrincipal(payment.contract_id, +payment.principal_amount);
 
     const now = nowISO();
-    run(
+    await run(
       `UPDATE payments
          SET is_void = 1, void_reason = :reason, voided_by = :uid, voided_at = :now
        WHERE id = :id`,
       { id: paymentId, reason, uid: ctx?.user?.id ?? null, now },
     );
-    refreshContractStatus(payment.contract_id);
+    await refreshContractStatus(payment.contract_id);
 
-    audit({
+    const after = await getPayment(paymentId);
+    await audit({
       userId: ctx?.user?.id,
       action: 'void',
       entity: 'payment',
       entityId: paymentId,
       before: payment,
-      after: getPayment(paymentId),
+      after,
       reason,
       ip: ctx?.ip,
     });
 
-    return getPayment(paymentId);
+    return after;
   });
 }
 
-export function getPayment(id) {
-  return get(
+export async function getPayment(id) {
+  return await get(
     `SELECT p.*, c.contract_no, d.full_name AS debtor_name, d.code AS debtor_code,
             u.full_name AS received_by_name, v.full_name AS voided_by_name
      FROM payments p
@@ -343,10 +343,10 @@ export function getPayment(id) {
 }
 
 /** ตัวอย่างผลการคำนวณก่อนกดบันทึก (ข้อ 8 "ระบบคำนวณและแสดงผลก่อนกดบันทึก") */
-export function previewPayment({ contractId, amountPaid, extraToPrincipal = false }) {
-  const contract = get(`SELECT * FROM contracts WHERE id = :id`, { id: contractId });
+export async function previewPayment({ contractId, amountPaid, extraToPrincipal = false }) {
+  const contract = await get(`SELECT * FROM contracts WHERE id = :id`, { id: contractId });
   if (!contract) throw new PaymentError('ไม่พบสัญญา');
-  const open = openInstallments(contractId);
+  const open = await openInstallments(contractId);
   const current = open[0] ?? null;
   const dueRemaining = current
     ? current.due_amount - current.interest_paid - current.principal_paid
@@ -368,7 +368,7 @@ export function previewPayment({ contractId, amountPaid, extraToPrincipal = fals
   };
 }
 
-export function listPayments(filter = {}) {
+export async function listPayments(filter = {}) {
   const where = ['1=1'];
   const params = {};
   if (filter.contractId) {
@@ -398,7 +398,7 @@ export function listPayments(filter = {}) {
   if (!filter.includeVoid) where.push('p.is_void = 0');
   params.limit = filter.limit ?? 200;
 
-  return all(
+  return await all(
     `SELECT p.*, c.contract_no, d.full_name AS debtor_name, d.code AS debtor_code,
             u.full_name AS received_by_name
      FROM payments p

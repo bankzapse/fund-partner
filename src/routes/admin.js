@@ -1,12 +1,9 @@
 import { Router } from 'express';
-import { copyFileSync, mkdirSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { all, get, run, tx, dbPath, getAllSettings, setSetting, DEFAULT_SETTINGS } from '../db/index.js';
+import { all, get, run, insert, tx, databaseUrl, getAllSettings, setSetting, DEFAULT_SETTINGS } from '../db/index.js';
 import { hashPassword, publicUser } from '../lib/auth.js';
 import { nowISO } from '../lib/time.js';
 import { audit, auditTrail } from '../lib/audit.js';
 import { ROLES, MATRIX } from '../lib/permissions.js';
-import { BACKUP_DIR } from '../lib/paths.js';
 import { voidPayment } from '../domain/payments.js';
 import { reyod } from '../domain/contracts.js';
 import { wrap, need, intParam } from './_helpers.js';
@@ -18,9 +15,9 @@ const router = Router();
 router.get(
   '/users',
   need('employees_manage'),
-  wrap((_req, res) => {
+  wrap(async (_req, res) => {
     res.json({
-      items: all(`SELECT * FROM users ORDER BY id`).map(publicUser),
+      items: (await all(`SELECT * FROM users ORDER BY id`)).map(publicUser),
       roles: ROLES,
       capabilities: Object.keys(MATRIX),
     });
@@ -30,15 +27,15 @@ router.get(
 router.post(
   '/users',
   need('employees_manage'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const b = req.body ?? {};
     if (!b.username?.trim()) return res.status(400).json({ error: 'ต้องระบุชื่อผู้ใช้' });
     if (!ROLES[b.role]) return res.status(400).json({ error: 'ตำแหน่งไม่ถูกต้อง' });
-    if (get(`SELECT id FROM users WHERE username = :u`, { u: b.username.trim() })) {
+    if (await get(`SELECT id FROM users WHERE username = :u`, { u: b.username.trim() })) {
       return res.status(400).json({ error: 'ชื่อผู้ใช้นี้ถูกใช้แล้ว' });
     }
     const now = nowISO();
-    const info = run(
+    const userId = await insert(
       `INSERT INTO users (username, password_hash, full_name, role, extra_perms, is_active, created_at, updated_at)
        VALUES (:u, :h, :name, :role, :extra, :active, :now, :now)`,
       {
@@ -51,8 +48,8 @@ router.post(
         now,
       },
     );
-    const user = publicUser(get(`SELECT * FROM users WHERE id = :id`, { id: Number(info.lastInsertRowid) }));
-    audit({ userId: req.ctx.user.id, action: 'create', entity: 'user', entityId: user.id, after: user, ip: req.ctx.ip });
+    const user = publicUser(await get(`SELECT * FROM users WHERE id = :id`, { id: userId }));
+    await audit({ userId: req.ctx.user.id, action: 'create', entity: 'user', entityId: user.id, after: user, ip: req.ctx.ip });
     res.status(201).json({ user });
   }),
 );
@@ -60,16 +57,16 @@ router.post(
 router.put(
   '/users/:id',
   need('employees_manage'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const id = intParam(req.params.id);
-    const before = get(`SELECT * FROM users WHERE id = :id`, { id });
+    const before = await get(`SELECT * FROM users WHERE id = :id`, { id });
     if (!before) return res.status(404).json({ error: 'ไม่พบผู้ใช้' });
     const b = req.body ?? {};
     if (before.role === 'owner' && b.is_active === false) {
-      const owners = get(`SELECT COUNT(*) AS n FROM users WHERE role='owner' AND is_active=1`).n;
+      const owners = Number((await get(`SELECT COUNT(*) AS n FROM users WHERE role = 'owner' AND is_active = 1`)).n);
       if (owners <= 1) return res.status(400).json({ error: 'ต้องมีเจ้าของที่เปิดใช้งานอย่างน้อย 1 คน' });
     }
-    run(
+    await run(
       `UPDATE users SET full_name = :name, role = :role, extra_perms = :extra,
                         is_active = :active, updated_at = :now
        WHERE id = :id`,
@@ -83,10 +80,10 @@ router.put(
       },
     );
     if (b.password) {
-      run(`UPDATE users SET password_hash = :h WHERE id = :id`, { id, h: hashPassword(b.password) });
+      await run(`UPDATE users SET password_hash = :h WHERE id = :id`, { id, h: hashPassword(b.password) });
     }
-    const after = publicUser(get(`SELECT * FROM users WHERE id = :id`, { id }));
-    audit({
+    const after = publicUser(await get(`SELECT * FROM users WHERE id = :id`, { id }));
+    await audit({
       userId: req.ctx.user.id,
       action: 'update',
       entity: 'user',
@@ -102,9 +99,9 @@ router.put(
 
 router.get(
   '/employees',
-  wrap((_req, res) => {
+  wrap(async (_req, res) => {
     res.json({
-      items: all(
+      items: await all(
         `SELECT e.*, u.username, s.full_name AS supervisor_name
          FROM employees e
          LEFT JOIN users u ON u.id = e.user_id
@@ -118,16 +115,17 @@ router.get(
 router.post(
   '/employees',
   need('employees_manage'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const b = req.body ?? {};
     if (!b.full_name?.trim()) return res.status(400).json({ error: 'ต้องระบุชื่อพนักงาน' });
-    const employee = tx(() => {
-      const code = b.code?.trim() || `E${String(all(`SELECT id FROM employees`).length + 1).padStart(3, '0')}`;
-      if (get(`SELECT id FROM employees WHERE code = :c`, { c: code })) {
+    const employee = await tx(async () => {
+      const existing = await all(`SELECT id FROM employees`);
+      const code = b.code?.trim() || `E${String(existing.length + 1).padStart(3, '0')}`;
+      if (await get(`SELECT id FROM employees WHERE code = :c`, { c: code })) {
         throw Object.assign(new Error('รหัสพนักงานนี้ถูกใช้แล้ว'), { status: 400 });
       }
       const now = nowISO();
-      const info = run(
+      const newId = await insert(
         `INSERT INTO employees (user_id, code, full_name, phone, area, supervisor_id, is_active, created_at, updated_at)
          VALUES (:uid, :code, :name, :phone, :area, :sup, 1, :now, :now)`,
         {
@@ -140,9 +138,9 @@ router.post(
           now,
         },
       );
-      return get(`SELECT * FROM employees WHERE id = :id`, { id: Number(info.lastInsertRowid) });
+      return await get(`SELECT * FROM employees WHERE id = :id`, { id: newId });
     });
-    audit({ userId: req.ctx.user.id, action: 'create', entity: 'employee', entityId: employee.id, after: employee, ip: req.ctx.ip });
+    await audit({ userId: req.ctx.user.id, action: 'create', entity: 'employee', entityId: employee.id, after: employee, ip: req.ctx.ip });
     res.status(201).json({ employee });
   }),
 );
@@ -150,12 +148,12 @@ router.post(
 router.put(
   '/employees/:id',
   need('employees_manage'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const id = intParam(req.params.id);
-    const before = get(`SELECT * FROM employees WHERE id = :id`, { id });
+    const before = await get(`SELECT * FROM employees WHERE id = :id`, { id });
     if (!before) return res.status(404).json({ error: 'ไม่พบพนักงาน' });
     const b = req.body ?? {};
-    run(
+    await run(
       `UPDATE employees SET full_name = :name, phone = :phone, area = :area,
               user_id = :uid, supervisor_id = :sup, is_active = :active, updated_at = :now
        WHERE id = :id`,
@@ -170,8 +168,8 @@ router.put(
         now: nowISO(),
       },
     );
-    const after = get(`SELECT * FROM employees WHERE id = :id`, { id });
-    audit({ userId: req.ctx.user.id, action: 'update', entity: 'employee', entityId: id, before, after, ip: req.ctx.ip });
+    const after = await get(`SELECT * FROM employees WHERE id = :id`, { id });
+    await audit({ userId: req.ctx.user.id, action: 'update', entity: 'employee', entityId: id, before, after, ip: req.ctx.ip });
     res.json({ employee: after });
   }),
 );
@@ -180,23 +178,23 @@ router.put(
 
 router.get(
   '/settings',
-  wrap((_req, res) => {
-    res.json({ settings: getAllSettings(), defaults: DEFAULT_SETTINGS });
+  wrap(async (_req, res) => {
+    res.json({ settings: await getAllSettings(), defaults: DEFAULT_SETTINGS });
   }),
 );
 
 router.put(
   '/settings',
   need('settings_manage'),
-  wrap((req, res) => {
-    const before = getAllSettings();
+  wrap(async (req, res) => {
+    const before = await getAllSettings();
     const patch = req.body?.settings ?? {};
     for (const [key, value] of Object.entries(patch)) {
       if (!Object.hasOwn(DEFAULT_SETTINGS, key)) continue;
-      setSetting(key, value, req.ctx.user.id);
+      await setSetting(key, value, req.ctx.user.id);
     }
-    const after = getAllSettings();
-    audit({ userId: req.ctx.user.id, action: 'update', entity: 'settings', entityId: 'settings', before, after, ip: req.ctx.ip });
+    const after = await getAllSettings();
+    await audit({ userId: req.ctx.user.id, action: 'update', entity: 'settings', entityId: 'settings', before, after, ip: req.ctx.ip });
     res.json({ settings: after });
   }),
 );
@@ -205,9 +203,9 @@ router.put(
 
 router.get(
   '/approvals',
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     res.json({
-      items: all(
+      items: await all(
         `SELECT a.*, r.full_name AS requested_by_name, d.full_name AS decided_by_name
          FROM approvals a
          LEFT JOIN users r ON r.id = a.requested_by
@@ -223,9 +221,9 @@ router.get(
 router.post(
   '/approvals/:id/decide',
   need('approvals_decide'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const id = intParam(req.params.id);
-    const approval = get(`SELECT * FROM approvals WHERE id = :id`, { id });
+    const approval = await get(`SELECT * FROM approvals WHERE id = :id`, { id });
     if (!approval) return res.status(404).json({ error: 'ไม่พบคำขอ' });
     if (approval.status !== 'pending') return res.status(400).json({ error: 'คำขอนี้ถูกพิจารณาแล้ว' });
 
@@ -234,12 +232,12 @@ router.post(
     if (approve) {
       const payload = JSON.parse(approval.payload);
       if (approval.kind === 'void_payment') {
-        result = voidPayment({ paymentId: payload.paymentId, reason: payload.reason }, req.ctx);
+        result = await voidPayment({ paymentId: payload.paymentId, reason: payload.reason }, req.ctx);
       } else if (approval.kind === 'reyod') {
-        result = reyod(payload, req.ctx);
+        result = await reyod(payload, req.ctx);
       }
     }
-    run(
+    await run(
       `UPDATE approvals SET status = :s, decided_by = :uid, decided_at = :now, decision_note = :note
        WHERE id = :id`,
       {
@@ -250,8 +248,8 @@ router.post(
         note: req.body?.note ?? null,
       },
     );
-    const after = get(`SELECT * FROM approvals WHERE id = :id`, { id });
-    audit({
+    const after = await get(`SELECT * FROM approvals WHERE id = :id`, { id });
+    await audit({
       userId: req.ctx.user.id,
       action: approve ? 'approve' : 'reject',
       entity: 'approval',
@@ -270,9 +268,9 @@ router.post(
 router.get(
   '/audit',
   need('audit_view'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     res.json({
-      items: auditTrail({
+      items: await auditTrail({
         entity: req.query.entity,
         entityId: req.query.entity_id,
         limit: intParam(req.query.limit, 200),
@@ -283,26 +281,41 @@ router.get(
 
 // ---- สำรองข้อมูล (ข้อ 15/17) ------------------------------------------------
 
-router.post(
-  '/backup',
-  need('settings_manage'),
-  wrap((req, res) => {
-    if (dbPath() === ':memory:') return res.status(400).json({ error: 'ฐานข้อมูลในหน่วยความจำสำรองไม่ได้' });
-    mkdirSync(BACKUP_DIR, { recursive: true });
-    const stamp = nowISO().replaceAll(/[^0-9]/g, '').slice(0, 14);
-    const name = `fund-partner-${stamp}.sqlite`;
-    copyFileSync(dbPath(), join(BACKUP_DIR, name));
-    audit({ userId: req.ctx.user.id, action: 'backup', entity: 'database', entityId: name, ip: req.ctx.ip });
-    res.status(201).json({ file: name });
-  }),
-);
+/**
+ * บน Supabase การสำรองข้อมูลอัตโนมัติทำโดยผู้ให้บริการอยู่แล้ว (Point-in-time recovery)
+ * ที่นี่จึงเป็นการ "ส่งออกข้อมูลทั้งหมดเป็น JSON" เพื่อเก็บสำเนาไว้เอง
+ * ซึ่งทำงานได้ทั้งบนเซิร์ฟเวอร์ปกติและบน Serverless (ไม่เขียนลงดิสก์)
+ */
+const BACKUP_TABLES = [
+  'users', 'employees', 'debtors', 'debtor_documents', 'contracts', 'contract_links',
+  'installments', 'payments', 'expenses', 'income_entries', 'daily_closings',
+  'settings', 'counters', 'approvals', 'audit_logs',
+];
 
 router.get(
-  '/backups',
+  '/backup',
   need('settings_manage'),
-  wrap((_req, res) => {
-    mkdirSync(BACKUP_DIR, { recursive: true });
-    res.json({ items: readdirSync(BACKUP_DIR).filter((f) => f.endsWith('.sqlite')).sort().reverse() });
+  wrap(async (req, res) => {
+    const dump = { exported_at: nowISO(), source: databaseUrl() ? 'supabase' : 'local', tables: {} };
+    for (const table of BACKUP_TABLES) {
+      const rows = await all(`SELECT * FROM ${table}`);
+      // ไม่ส่งออกรหัสผ่านที่เข้ารหัสไว้ ป้องกันการนำไฟล์สำรองไปใช้ต่อโดยมิชอบ
+      dump.tables[table] =
+        table === 'users' ? rows.map(({ password_hash, ...rest }) => rest) : rows;
+    }
+    await audit({
+      userId: req.ctx.user.id,
+      action: 'backup',
+      entity: 'database',
+      entityId: dump.exported_at,
+      ip: req.ctx.ip,
+    });
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="fund-partner-backup-${dump.exported_at.slice(0, 10)}.json"`,
+    );
+    res.send(JSON.stringify(dump, null, 2));
   }),
 );
 

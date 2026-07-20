@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { all, get, run, tx, nextCounter } from '../db/index.js';
+import { all, get, run, insert, tx, nextCounter } from '../db/index.js';
 import { nowISO } from '../lib/time.js';
 import { audit, auditTrail } from '../lib/audit.js';
 import { contractSummary, contractBehaviour } from '../domain/contracts.js';
@@ -20,13 +20,13 @@ const router = Router();
 router.get(
   '/',
   need('debtors_view'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const q = String(req.query.q ?? '').trim();
     const status = req.query.status ? String(req.query.status) : null;
-    const scope = scopeEmployeeId(req.ctx.user);
+    const scope = await scopeEmployeeId(req.ctx.user);
     const params = { like: `%${q}%`, status, emp: scope, limit: intParam(req.query.limit, 100) };
 
-    const rows = all(
+    const rows = await all(
       `SELECT d.*, e.full_name AS employee_name,
          (SELECT COUNT(*) FROM contracts c WHERE c.debtor_id = d.id) AS contract_count,
          (SELECT COUNT(*) FROM contracts c WHERE c.debtor_id = d.id AND c.status = 'active') AS active_contracts,
@@ -50,9 +50,9 @@ router.get(
 router.get(
   '/export',
   need('debtors_view'),
-  wrap((req, res) => {
-    const scope = scopeEmployeeId(req.ctx.user);
-    const rows = all(
+  wrap(async (req, res) => {
+    const scope = await scopeEmployeeId(req.ctx.user);
+    const rows = await all(
       `SELECT d.code, d.full_name, d.phone, d.address, d.status, e.full_name AS employee_name,
               (SELECT COALESCE(SUM(c.principal_remaining),0) FROM contracts c
                  WHERE c.debtor_id = d.id AND c.status='active') AS principal_outstanding
@@ -77,34 +77,38 @@ router.get(
 router.get(
   '/:id',
   need('debtors_view'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const id = intParam(req.params.id);
-    assertDebtorAccess(req.ctx.user, id);
-    const debtor = get(
+    await assertDebtorAccess(req.ctx.user, id);
+    const debtor = await get(
       `SELECT d.*, e.full_name AS employee_name FROM debtors d
        LEFT JOIN employees e ON e.id = d.employee_id WHERE d.id = :id`,
       { id },
     );
     if (!debtor) return res.status(404).json({ error: 'ไม่พบลูกหนี้' });
 
-    const contracts = all(
+    const contractRows = await all(
       `SELECT * FROM contracts WHERE debtor_id = :id ORDER BY id DESC`,
       { id },
-    ).map((c) => ({
-      ...c,
-      summary: contractSummary(c.id),
-      behaviour: contractBehaviour(c.id),
-    }));
+    );
+    const contracts = [];
+    for (const c of contractRows) {
+      contracts.push({
+        ...c,
+        summary: await contractSummary(c.id),
+        behaviour: await contractBehaviour(c.id),
+      });
+    }
 
     res.json({
       debtor,
       contracts,
-      payments: listPayments({ debtorId: id, includeVoid: true, limit: 300 }),
-      documents: all(
+      payments: await listPayments({ debtorId: id, includeVoid: true, limit: 300 }),
+      documents: await all(
         `SELECT * FROM debtor_documents WHERE debtor_id = :id ORDER BY id DESC`,
         { id },
       ),
-      audit: auditTrail({ entity: 'debtor', entityId: id, limit: 50 }),
+      audit: await auditTrail({ entity: 'debtor', entityId: id, limit: 50 }),
     });
   }),
 );
@@ -112,17 +116,17 @@ router.get(
 router.post(
   '/',
   need('debtors_edit'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const b = req.body ?? {};
     if (!b.full_name?.trim()) return res.status(400).json({ error: 'ต้องระบุชื่อ-นามสกุล' });
 
-    const debtor = tx(() => {
-      const code = b.code?.trim() || `D${String(nextCounter('debtor')).padStart(5, '0')}`;
-      if (get(`SELECT id FROM debtors WHERE code = :c`, { c: code })) {
+    const debtor = await tx(async () => {
+      const code = b.code?.trim() || `D${String(await nextCounter('debtor')).padStart(5, '0')}`;
+      if (await get(`SELECT id FROM debtors WHERE code = :c`, { c: code })) {
         throw Object.assign(new Error('รหัสลูกหนี้นี้ถูกใช้แล้ว'), { status: 400 });
       }
       const now = nowISO();
-      const info = run(
+      const newId = await insert(
         `INSERT INTO debtors (code, full_name, phone, address, note, employee_id, area, status, created_at, updated_at)
          VALUES (:code, :name, :phone, :addr, :note, :emp, :area, :status, :now, :now)`,
         {
@@ -137,10 +141,10 @@ router.post(
           now,
         },
       );
-      return get(`SELECT * FROM debtors WHERE id = :id`, { id: Number(info.lastInsertRowid) });
+      return await get(`SELECT * FROM debtors WHERE id = :id`, { id: newId });
     });
 
-    audit({
+    await audit({
       userId: req.ctx.user.id,
       action: 'create',
       entity: 'debtor',
@@ -155,13 +159,13 @@ router.post(
 router.put(
   '/:id',
   need('debtors_edit'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const id = intParam(req.params.id);
-    const before = get(`SELECT * FROM debtors WHERE id = :id`, { id });
+    const before = await get(`SELECT * FROM debtors WHERE id = :id`, { id });
     if (!before) return res.status(404).json({ error: 'ไม่พบลูกหนี้' });
     const b = req.body ?? {};
 
-    run(
+    await run(
       `UPDATE debtors SET
          full_name = :name, phone = :phone, address = :addr, note = :note,
          employee_id = :emp, area = :area, status = :status, updated_at = :now
@@ -178,8 +182,8 @@ router.put(
         now: nowISO(),
       },
     );
-    const after = get(`SELECT * FROM debtors WHERE id = :id`, { id });
-    audit({
+    const after = await get(`SELECT * FROM debtors WHERE id = :id`, { id });
+    await audit({
       userId: req.ctx.user.id,
       action: 'update',
       entity: 'debtor',
@@ -197,15 +201,15 @@ router.put(
 router.post(
   '/:id/documents',
   need('debtors_edit'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const id = intParam(req.params.id);
-    if (!get(`SELECT id FROM debtors WHERE id = :id`, { id })) {
+    if (!(await get(`SELECT id FROM debtors WHERE id = :id`, { id }))) {
       return res.status(404).json({ error: 'ไม่พบลูกหนี้' });
     }
-    const saved = saveDataUrl(req.body?.data_url, `debtor-${id}`);
+    const saved = await saveDataUrl(req.body?.data_url, `debtor-${id}`);
     if (!saved) return res.status(400).json({ error: 'ไม่พบไฟล์แนบ' });
 
-    const info = run(
+    const docId = await insert(
       `INSERT INTO debtor_documents (debtor_id, kind, file_name, file_path, mime_type, note, uploaded_by, created_at)
        VALUES (:id, :kind, :name, :path, :mime, :note, :uid, :now)`,
       {
@@ -219,10 +223,8 @@ router.post(
         now: nowISO(),
       },
     );
-    const doc = get(`SELECT * FROM debtor_documents WHERE id = :id`, {
-      id: Number(info.lastInsertRowid),
-    });
-    audit({
+    const doc = await get(`SELECT * FROM debtor_documents WHERE id = :id`, { id: docId });
+    await audit({
       userId: req.ctx.user.id,
       action: 'create',
       entity: 'debtor_document',

@@ -1,3 +1,7 @@
+-- พันธมิตรเงินทุน :: Migration สำหรับ Supabase
+-- รันไฟล์นี้ใน Supabase Dashboard > SQL Editor > New query
+-- (หรือระบบจะสร้างตารางให้เองอัตโนมัติเมื่อเชื่อมต่อครั้งแรก)
+
 -- พันธมิตรเงินทุน :: โครงสร้างฐานข้อมูล PostgreSQL (SRS ข้อ 13)
 -- ใช้ได้ทั้ง Supabase (production) และ PGlite (dev/test) — dialect เดียวกันทั้งหมด
 --
@@ -256,3 +260,26 @@ CREATE TABLE IF NOT EXISTS approvals (
   decided_at    TEXT,
   decision_note TEXT
 );
+
+-- ---------------------------------------------------------------------------
+-- ความปลอดภัยระดับแถว (Row Level Security)
+-- แอปเชื่อมต่อด้วย service role ผ่านฝั่งเซิร์ฟเวอร์เท่านั้น และตรวจสิทธิ์เองในโค้ด
+-- จึงเปิด RLS ไว้เพื่อกันการเข้าถึงตรงจากฝั่งเบราว์เซอร์ด้วย anon key
+-- ---------------------------------------------------------------------------
+ALTER TABLE users            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sessions         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE employees        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE debtors          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE debtor_documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE contracts        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE contract_links   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE installments     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE payments         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE expenses         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE income_entries   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE daily_closings   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_logs       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE settings         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE counters         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE approvals        ENABLE ROW LEVEL SECURITY;
+-- ไม่สร้าง policy ใด ๆ = anon key เข้าไม่ได้เลย, service role ข้าม RLS ได้ตามปกติ

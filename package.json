@@ -11,10 +11,13 @@
     "dev": "node --watch src/server.js",
     "seed": "node src/db/seed.js",
     "reset": "node src/db/seed.js --reset",
-    "test": "node --test tests/"
+    "test": "FP_DB_PATH=:memory: node --test tests/*.test.js",
+    "vercel-build": "echo no build step"
   },
   "dependencies": {
+    "@electric-sql/pglite": "^0.5.4",
     "bcryptjs": "^2.4.3",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "pg": "^8.22.0"
   }
 }

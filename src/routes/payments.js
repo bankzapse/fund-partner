@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { get, run } from '../db/index.js';
+import { get, run, insert } from '../db/index.js';
 import {
   recordPayment,
   previewPayment,
@@ -18,10 +18,10 @@ const router = Router();
 router.get(
   '/',
   need('debtors_view'),
-  wrap((req, res) => {
-    const scope = scopeEmployeeId(req.ctx.user);
+  wrap(async (req, res) => {
+    const scope = await scopeEmployeeId(req.ctx.user);
     res.json({
-      items: listPayments({
+      items: await listPayments({
         contractId: intParam(req.query.contract_id, null),
         debtorId: intParam(req.query.debtor_id, null),
         from: req.query.from,
@@ -37,9 +37,9 @@ router.get(
 router.get(
   '/export',
   need('reports_view'),
-  wrap((req, res) => {
-    const scope = scopeEmployeeId(req.ctx.user, 'reports_view');
-    const rows = listPayments({
+  wrap(async (req, res) => {
+    const scope = await scopeEmployeeId(req.ctx.user, 'reports_view');
+    const rows = await listPayments({
       from: req.query.from ?? today(),
       to: req.query.to ?? today(),
       employeeId: scope,
@@ -67,16 +67,16 @@ router.get(
 router.get(
   '/context/:contractId',
   need('payments_create'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const id = intParam(req.params.contractId);
-    const contract = getContract(id);
+    const contract = await getContract(id);
     if (!contract) return res.status(404).json({ error: 'ไม่พบสัญญา' });
-    assertDebtorAccess(req.ctx.user, contract.debtor_id, 'payments_create');
+    await assertDebtorAccess(req.ctx.user, contract.debtor_id, 'payments_create');
     res.json({
-      summary: contractSummary(id),
-      recent: listPayments({ contractId: id, limit: 10 }),
+      summary: await contractSummary(id),
+      recent: await listPayments({ contractId: id, limit: 10 }),
       day_closed: Boolean(
-        get(`SELECT 1 AS x FROM daily_closings WHERE closing_date = :d`, { d: today() }),
+        await get(`SELECT 1 AS x FROM daily_closings WHERE closing_date = :d`, { d: today() }),
       ),
     });
   }),
@@ -86,9 +86,9 @@ router.get(
 router.post(
   '/preview',
   need('payments_create'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     res.json({
-      preview: previewPayment({
+      preview: await previewPayment({
         contractId: intParam(req.body?.contract_id),
         amountPaid: intParam(req.body?.amount_paid, 0),
         extraToPrincipal: req.body?.extra_to_principal === true,
@@ -100,14 +100,14 @@ router.post(
 router.post(
   '/',
   need('payments_create'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const contractId = intParam(req.body?.contract_id);
-    const contract = getContract(contractId);
+    const contract = await getContract(contractId);
     if (!contract) return res.status(404).json({ error: 'ไม่พบสัญญา' });
-    assertDebtorAccess(req.ctx.user, contract.debtor_id, 'payments_create');
+    await assertDebtorAccess(req.ctx.user, contract.debtor_id, 'payments_create');
 
-    const proof = req.body?.proof_data_url ? saveDataUrl(req.body.proof_data_url, 'receipt') : null;
-    const payment = recordPayment(
+    const proof = req.body?.proof_data_url ? await saveDataUrl(req.body.proof_data_url, 'receipt') : null;
+    const payment = await recordPayment(
       {
         contractId,
         amountPaid: intParam(req.body?.amount_paid, 0),
@@ -119,17 +119,17 @@ router.post(
       },
       req.ctx,
     );
-    res.status(201).json({ payment, summary: contractSummary(contractId) });
+    res.status(201).json({ payment, summary: await contractSummary(contractId) });
   }),
 );
 
 router.get(
   '/:id',
   need('debtors_view'),
-  wrap((req, res) => {
-    const payment = getPayment(intParam(req.params.id));
+  wrap(async (req, res) => {
+    const payment = await getPayment(intParam(req.params.id));
     if (!payment) return res.status(404).json({ error: 'ไม่พบรายการ' });
-    assertDebtorAccess(req.ctx.user, payment.debtor_id);
+    await assertDebtorAccess(req.ctx.user, payment.debtor_id);
     res.json({ payment });
   }),
 );
@@ -138,13 +138,13 @@ router.get(
 router.post(
   '/:id/void',
   need('payments_void'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const id = intParam(req.params.id);
     const reason = req.body?.reason;
     if (!reason) return res.status(400).json({ error: 'ต้องระบุเหตุผลการยกเลิก' });
 
     if (needsApproval(req.ctx.user, 'payments_void')) {
-      const info = run(
+      const approvalId = await insert(
         `INSERT INTO approvals (kind, payload, requested_by, requested_at)
          VALUES ('void_payment', :payload, :uid, :now)`,
         {
@@ -153,10 +153,8 @@ router.post(
           now: nowISO(),
         },
       );
-      const approval = get(`SELECT * FROM approvals WHERE id = :id`, {
-        id: Number(info.lastInsertRowid),
-      });
-      audit({
+      const approval = await get(`SELECT * FROM approvals WHERE id = :id`, { id: approvalId });
+      await audit({
         userId: req.ctx.user.id,
         action: 'request_approval',
         entity: 'approval',
@@ -167,8 +165,8 @@ router.post(
       return res.status(202).json({ pending_approval: approval });
     }
 
-    const payment = voidPayment({ paymentId: id, reason }, req.ctx);
-    res.json({ payment, summary: contractSummary(payment.contract_id) });
+    const payment = await voidPayment({ paymentId: id, reason }, req.ctx);
+    res.json({ payment, summary: await contractSummary(payment.contract_id) });
   }),
 );
 

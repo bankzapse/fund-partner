@@ -28,16 +28,16 @@ function resolveRange(query) {
 router.get(
   '/summary',
   need('reports_view'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const { from, to } = resolveRange(req.query);
-    const scope = scopeEmployeeId(req.ctx.user, 'reports_view');
+    const scope = await scopeEmployeeId(req.ctx.user, 'reports_view');
     res.json({
       from,
       to,
-      finance: financeSummary({ from, to, employeeId: scope }),
-      collection: collectionSummary({ from, to, employeeId: scope }),
-      debtor_status: debtorStatusCounts({ employeeId: scope }),
-      breakdown: breakdown({ from, to }),
+      finance: await financeSummary({ from, to, employeeId: scope }),
+      collection: await collectionSummary({ from, to, employeeId: scope }),
+      debtor_status: await debtorStatusCounts({ employeeId: scope }),
+      breakdown: await breakdown({ from, to }),
     });
   }),
 );
@@ -45,26 +45,26 @@ router.get(
 router.get(
   '/daily-series',
   need('reports_view'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const { from, to } = resolveRange(req.query);
-    res.json({ items: dailySeries({ from, to }) });
+    res.json({ items: await dailySeries({ from, to }) });
   }),
 );
 
 router.get(
   '/monthly-series',
   need('reports_view'),
-  wrap((req, res) => {
-    res.json({ items: monthlySeries(req.query.year ?? today().slice(0, 4)) });
+  wrap(async (req, res) => {
+    res.json({ items: await monthlySeries(req.query.year ?? today().slice(0, 4)) });
   }),
 );
 
 router.get(
   '/employees',
   need('reports_view'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const { from, to } = resolveRange(req.query);
-    res.json({ items: employeeReport({ from, to }) });
+    res.json({ items: await employeeReport({ from, to }) });
   }),
 );
 
@@ -72,12 +72,12 @@ router.get(
 router.get(
   '/overdue',
   need('reports_view'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const asOf = req.query.date ?? today();
-    const scope = scopeEmployeeId(req.ctx.user, 'reports_view');
+    const scope = await scopeEmployeeId(req.ctx.user, 'reports_view');
     const minDays = intParam(req.query.min_days, 1);
     res.json({
-      overdue: all(
+      overdue: await all(
         `SELECT c.id AS contract_id, c.contract_no, c.principal_remaining, c.type,
                 d.code AS debtor_code, d.full_name AS debtor_name, d.phone,
                 e.full_name AS employee_name,
@@ -91,12 +91,13 @@ router.get(
          WHERE c.status = 'active' AND i.due_date < :asOf
            AND (i.interest_paid < i.interest_due OR i.principal_paid < i.principal_due)
            ${scope !== null ? 'AND c.employee_id = :emp' : ''}
-         GROUP BY c.id
-         HAVING overdue_installments >= :minDays
+         GROUP BY c.id, c.contract_no, c.principal_remaining, c.type,
+                  d.code, d.full_name, d.phone, e.full_name
+         HAVING COUNT(i.id) >= :minDays
          ORDER BY arrears_amount DESC`,
         { asOf, emp: scope, minDays },
       ),
-      interest_only: all(
+      interest_only: await all(
         `SELECT c.id AS contract_id, c.contract_no, c.principal_remaining,
                 d.code AS debtor_code, d.full_name AS debtor_name, d.phone,
                 COUNT(p.id) AS interest_only_count,
@@ -106,8 +107,9 @@ router.get(
          JOIN debtors d ON d.id = c.debtor_id
          WHERE p.is_void = 0 AND p.status = 'interest_only' AND c.status = 'active'
            ${scope !== null ? 'AND c.employee_id = :emp' : ''}
-         GROUP BY c.id
-         HAVING interest_only_count >= :minDays
+         GROUP BY c.id, c.contract_no, c.principal_remaining,
+                  d.code, d.full_name, d.phone
+         HAVING COUNT(p.id) >= :minDays
          ORDER BY interest_only_count DESC`,
         { emp: scope, minDays },
       ),
@@ -119,10 +121,10 @@ router.get(
 router.get(
   '/reyod',
   need('reports_view'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const { from, to } = resolveRange(req.query);
     res.json({
-      items: all(
+      items: await all(
         `SELECT l.*, fc.contract_no AS from_no, tc.contract_no AS to_no,
                 d.full_name AS debtor_name, d.code AS debtor_code,
                 u.full_name AS created_by_name, tc.principal_amount AS new_principal
@@ -143,9 +145,9 @@ router.get(
 router.get(
   '/profit-loss',
   need('profit_view'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const { from, to } = resolveRange(req.query);
-    const f = financeSummary({ from, to });
+    const f = await financeSummary({ from, to });
     res.json({
       from,
       to,
@@ -155,9 +157,7 @@ router.get(
         { label: 'รายได้อื่น', amount: f.other_income },
       ],
       total_revenue: f.real_income,
-      expenses: breakdown({ from, to }).expenses.filter(
-        (e) => e.category !== 'เงินปล่อยใหม่/เงินสดจ่ายให้ลูกค้า',
-      ),
+      expenses: (await breakdown({ from, to })).expenses,
       total_expense: f.operating_expense,
       net_profit: f.net_profit,
       capital_flow: {
@@ -174,9 +174,9 @@ router.get(
 router.get(
   '/summary.csv',
   need('reports_view'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const { from, to } = resolveRange(req.query);
-    const f = financeSummary({ from, to });
+    const f = await financeSummary({ from, to });
     const rows = [
       ['เงินรับทั้งหมด', f.total_in],
       ['เงินจ่ายทั้งหมด', f.total_out],

@@ -1,5 +1,5 @@
-import { existsSync, unlinkSync } from 'node:fs';
-import { db, get, run, all, dbPath, setSetting } from './index.js';
+import { rmSync, existsSync } from 'node:fs';
+import { db, get, run, insert, all, pgliteDir, databaseUrl, setSetting, closeDb } from './index.js';
 import { hashPassword } from '../lib/auth.js';
 import { nowISO, today, addDays } from '../lib/time.js';
 import { createContract } from '../domain/contracts.js';
@@ -8,15 +8,26 @@ import { recordPayment } from '../domain/payments.js';
 const RESET = process.argv.includes('--reset');
 const DEMO = process.argv.includes('--demo') || RESET;
 
-const DB_FILE = dbPath();
-if (RESET && DB_FILE !== ':memory:') {
-  for (const f of [DB_FILE, `${DB_FILE}-wal`, `${DB_FILE}-shm`]) {
-    if (existsSync(f)) unlinkSync(f);
+const TARGET = databaseUrl() ? 'Supabase (DATABASE_URL)' : pgliteDir();
+
+if (RESET) {
+  if (databaseUrl()) {
+    // ฐานข้อมูลบนคลาวด์: ล้างเฉพาะตาราง ไม่ลบทั้งฐาน
+    await db();
+    await run(`TRUNCATE TABLE
+      audit_logs, approvals, daily_closings, income_entries, expenses, payments,
+      installments, contract_links, contracts, debtor_documents, debtors,
+      employees, sessions, users, settings, counters
+      RESTART IDENTITY CASCADE`);
+    console.log('ล้างข้อมูลเดิมบน Supabase แล้ว');
+  } else {
+    const dir = pgliteDir();
+    if (dir !== ':memory:' && existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+    console.log('ลบฐานข้อมูลเดิมในเครื่องแล้ว');
   }
-  console.log('ลบฐานข้อมูลเดิมแล้ว');
 }
 
-db();
+await db();
 
 /** ผู้ใช้เริ่มต้นครบทุกตำแหน่งตามตารางสิทธิ์ ข้อ 12 */
 const DEFAULT_USERS = [
@@ -26,11 +37,11 @@ const DEFAULT_USERS = [
   { username: 'account', password: 'account1234', full_name: 'ฝ่ายบัญชี', role: 'accountant' },
 ];
 
-export function seedUsers() {
+export async function seedUsers() {
   const now = nowISO();
   for (const u of DEFAULT_USERS) {
-    if (get(`SELECT id FROM users WHERE username = :u`, { u: u.username })) continue;
-    run(
+    if (await get(`SELECT id FROM users WHERE username = :u`, { u: u.username })) continue;
+    await run(
       `INSERT INTO users (username, password_hash, full_name, role, is_active, created_at, updated_at)
        VALUES (:u, :h, :name, :role, 1, :now, :now)`,
       { u: u.username, h: hashPassword(u.password), name: u.full_name, role: u.role, now },
@@ -39,15 +50,15 @@ export function seedUsers() {
   }
 
   // ผูกพนักงานเก็บเงินกับผู้ใช้ เพื่อให้เห็นเฉพาะลูกหนี้ที่ตนดูแล (ข้อ 12)
-  const collectorUser = get(`SELECT id FROM users WHERE username = 'collector'`);
-  if (collectorUser && !get(`SELECT id FROM employees WHERE user_id = :uid`, { uid: collectorUser.id })) {
+  const collectorUser = await get(`SELECT id FROM users WHERE username = 'collector'`);
+  if (collectorUser && !(await get(`SELECT id FROM employees WHERE user_id = :uid`, { uid: collectorUser.id }))) {
     const now2 = nowISO();
-    run(
+    await run(
       `INSERT INTO employees (user_id, code, full_name, phone, area, is_active, created_at, updated_at)
        VALUES (:uid, 'E001', 'สมชาย เก็บเงิน', '081-000-0001', 'สายเหนือ', 1, :now, :now)`,
       { uid: collectorUser.id, now: now2 },
     );
-    run(
+    await run(
       `INSERT INTO employees (code, full_name, phone, area, is_active, created_at, updated_at)
        VALUES ('E002', 'สมหญิง เก็บเงิน', '081-000-0002', 'สายใต้', 1, :now, :now)`,
       { now: now2 },
@@ -56,15 +67,15 @@ export function seedUsers() {
   }
 }
 
-export function seedDemo() {
-  if (get(`SELECT id FROM debtors LIMIT 1`)) {
+export async function seedDemo() {
+  if (await get(`SELECT id FROM debtors LIMIT 1`)) {
     console.log('มีข้อมูลลูกหนี้อยู่แล้ว — ข้ามการสร้างข้อมูลตัวอย่าง');
     return;
   }
-  const owner = get(`SELECT * FROM users WHERE username = 'owner'`);
+  const owner = await get(`SELECT * FROM users WHERE username = 'owner'`);
   const ctx = { user: owner, ip: '127.0.0.1' };
-  const emp1 = get(`SELECT id FROM employees WHERE code = 'E001'`).id;
-  const emp2 = get(`SELECT id FROM employees WHERE code = 'E002'`).id;
+  const emp1 = (await get(`SELECT id FROM employees WHERE code = 'E001'`)).id;
+  const emp2 = (await get(`SELECT id FROM employees WHERE code = 'E002'`)).id;
   const now = nowISO();
 
   const people = [
@@ -75,25 +86,27 @@ export function seedDemo() {
   ];
   const debtorIds = [];
   for (const [code, name, phone, addr, emp] of people) {
-    const info = run(
+    const newId = await insert(
       `INSERT INTO debtors (code, full_name, phone, address, employee_id, status, created_at, updated_at)
        VALUES (:code, :name, :phone, :addr, :emp, 'normal', :now, :now)`,
       { code, name, phone, addr, emp, now },
     );
-    debtorIds.push(Number(info.lastInsertRowid));
+    debtorIds.push(newId);
   }
 
   // เงินทุนตั้งต้นของกิจการ (ไม่ใช่รายได้ — เป็นการนำทุนเข้า)
-  run(
+  await run(
     `INSERT INTO income_entries (entry_date, category, amount, description, created_by, created_at)
      VALUES (:d, 'capital', 5000000, 'เงินทุนตั้งต้นของกิจการ', :uid, :now)`,
     { d: addDays(today(), -60), uid: owner.id, now },
   );
 
+  const collectorUser = await get(`SELECT * FROM users WHERE username = 'collector'`);
+
   const start = addDays(today(), -10);
 
   // สัญญารายวัน 24 งวด: เงินต้น 1,000 ค่างวด 50 (ดอก 20 + ต้น 30) ตามตัวอย่าง SRS ข้อ 3.1/7.2
-  const c1 = createContract(
+  const c1 = await createContract(
     {
       debtorId: debtorIds[0],
       employeeId: emp1,
@@ -107,7 +120,7 @@ export function seedDemo() {
     ctx,
   );
 
-  const c2 = createContract(
+  const c2 = await createContract(
     {
       debtorId: debtorIds[1],
       employeeId: emp1,
@@ -122,7 +135,7 @@ export function seedDemo() {
   );
 
   // สัญญารายเดือน
-  createContract(
+  await createContract(
     {
       debtorId: debtorIds[2],
       employeeId: emp2,
@@ -137,7 +150,7 @@ export function seedDemo() {
   );
 
   // สัญญาดอกลอย
-  createContract(
+  await createContract(
     {
       debtorId: debtorIds[3],
       employeeId: emp2,
@@ -156,15 +169,15 @@ export function seedDemo() {
   for (let i = 1; i <= 8; i++) {
     const amount = pattern[i - 1];
     if (amount === 0) continue;
-    recordPayment(
+    await recordPayment(
       { contractId: c1.contract.id, amountPaid: amount, paidDate: addDays(start, i) },
-      { user: get(`SELECT * FROM users WHERE username='collector'`), ip: '127.0.0.1' },
+      { user: collectorUser, ip: '127.0.0.1' },
     );
   }
   for (let i = 1; i <= 4; i++) {
-    recordPayment(
+    await recordPayment(
       { contractId: c2.contract.id, amountPaid: 10000, paidDate: addDays(addDays(today(), -6), i) },
-      { user: get(`SELECT * FROM users WHERE username='collector'`), ip: '127.0.0.1' },
+      { user: collectorUser, ip: '127.0.0.1' },
     );
   }
 
@@ -175,7 +188,7 @@ export function seedDemo() {
     ['อุปกรณ์สำนักงาน', 45000, 'กระดาษและหมึกพิมพ์'],
   ];
   for (const [cat, amt, desc] of expenses) {
-    run(
+    await run(
       `INSERT INTO expenses (entry_date, category, amount, description, employee_id, created_by, created_at)
        VALUES (:d, :cat, :amt, :desc, :emp, :uid, :now)`,
       { d: today(), cat, amt, desc, emp: emp1, uid: owner.id, now },
@@ -185,9 +198,11 @@ export function seedDemo() {
   console.log(`สร้างข้อมูลตัวอย่าง: ลูกหนี้ ${people.length} ราย, สัญญา 4 ฉบับ`);
 }
 
-seedUsers();
-setSetting('company_name', 'พันธมิตรเงินทุน', get(`SELECT id FROM users WHERE username='owner'`)?.id);
-if (DEMO) seedDemo();
+await seedUsers();
+const ownerRow = await get(`SELECT id FROM users WHERE username = 'owner'`);
+await setSetting('company_name', 'พันธมิตรเงินทุน', ownerRow?.id);
+if (DEMO) await seedDemo();
 
-console.log(`\nฐานข้อมูล: ${DB_FILE}`);
+console.log(`\nฐานข้อมูล: ${TARGET}`);
 console.log('เข้าสู่ระบบด้วย owner / owner1234 แล้วเปลี่ยนรหัสผ่านทันที');
+await closeDb();

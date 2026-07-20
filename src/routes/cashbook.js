@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { all, get, run, getAllSettings, DISBURSE_CATEGORY, CAPITAL_IN_CATEGORY, CAPITAL_OUT_CATEGORY } from '../db/index.js';
+import { all, get, run, insert, getAllSettings, DISBURSE_CATEGORY, CAPITAL_IN_CATEGORY, CAPITAL_OUT_CATEGORY } from '../db/index.js';
 import { nowISO, today } from '../lib/time.js';
 import { audit } from '../lib/audit.js';
 import { assertNonNegative } from '../lib/money.js';
@@ -13,13 +13,14 @@ const router = Router();
 router.get(
   '/day',
   need('cashbook'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const date = req.query.date ?? today();
+    const settings = await getAllSettings();
     res.json({
       date,
-      summary: financeSummary({ from: date, to: date }),
-      payments: listPayments({ from: date, to: date, limit: 1000 }),
-      income: all(
+      summary: await financeSummary({ from: date, to: date }),
+      payments: await listPayments({ from: date, to: date, limit: 1000 }),
+      income: await all(
         `SELECT i.*, u.full_name AS created_by_name, c.contract_no
          FROM income_entries i
          LEFT JOIN users u ON u.id = i.created_by
@@ -27,7 +28,7 @@ router.get(
          WHERE i.entry_date = :d ORDER BY i.id DESC`,
         { d: date },
       ),
-      expenses: all(
+      expenses: await all(
         `SELECT e.*, u.full_name AS created_by_name, emp.full_name AS employee_name, c.contract_no
          FROM expenses e
          LEFT JOIN users u ON u.id = e.created_by
@@ -36,10 +37,10 @@ router.get(
          WHERE e.entry_date = :d ORDER BY e.id DESC`,
         { d: date },
       ),
-      closing: get(`SELECT * FROM daily_closings WHERE closing_date = :d`, { d: date }),
+      closing: await get(`SELECT * FROM daily_closings WHERE closing_date = :d`, { d: date }),
       categories: {
-        expense: JSON.parse(getAllSettings().expense_categories),
-        income: JSON.parse(getAllSettings().income_categories),
+        expense: JSON.parse(settings.expense_categories),
+        income: JSON.parse(settings.income_categories),
       },
       disburse_category: DISBURSE_CATEGORY,
       capital_in_category: CAPITAL_IN_CATEGORY,
@@ -51,15 +52,15 @@ router.get(
 router.post(
   '/expenses',
   need('cashbook'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const b = req.body ?? {};
     const amount = assertNonNegative(intParam(b.amount, 0), 'จำนวนเงิน');
     if (amount === 0) return res.status(400).json({ error: 'จำนวนเงินต้องมากกว่า 0' });
     const entryDate = b.entry_date ?? today();
-    assertDayOpen(entryDate, req.ctx.user);
+    await assertDayOpen(entryDate, req.ctx.user);
 
-    const receipt = b.receipt_data_url ? saveDataUrl(b.receipt_data_url, 'expense') : null;
-    const info = run(
+    const receipt = b.receipt_data_url ? await saveDataUrl(b.receipt_data_url, 'expense') : null;
+    const expenseId = await insert(
       `INSERT INTO expenses (entry_date, category, amount, description, paid_by, employee_id,
                              contract_id, receipt_path, approved_by, created_by, created_at)
        VALUES (:d, :cat, :amt, :desc, :paid, :emp, :cid, :receipt, :appr, :uid, :now)`,
@@ -77,8 +78,8 @@ router.post(
         now: nowISO(),
       },
     );
-    const row = get(`SELECT * FROM expenses WHERE id = :id`, { id: Number(info.lastInsertRowid) });
-    audit({
+    const row = await get(`SELECT * FROM expenses WHERE id = :id`, { id: expenseId });
+    await audit({
       userId: req.ctx.user.id,
       action: 'create',
       entity: 'expense',
@@ -93,14 +94,14 @@ router.post(
 router.post(
   '/income',
   need('cashbook'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const b = req.body ?? {};
     const amount = assertNonNegative(intParam(b.amount, 0), 'จำนวนเงิน');
     if (amount === 0) return res.status(400).json({ error: 'จำนวนเงินต้องมากกว่า 0' });
     const entryDate = b.entry_date ?? today();
-    assertDayOpen(entryDate, req.ctx.user);
+    await assertDayOpen(entryDate, req.ctx.user);
 
-    const info = run(
+    const incomeId = await insert(
       `INSERT INTO income_entries (entry_date, category, amount, description, contract_id, debtor_id, created_by, created_at)
        VALUES (:d, :cat, :amt, :desc, :cid, :did, :uid, :now)`,
       {
@@ -114,10 +115,8 @@ router.post(
         now: nowISO(),
       },
     );
-    const row = get(`SELECT * FROM income_entries WHERE id = :id`, {
-      id: Number(info.lastInsertRowid),
-    });
-    audit({
+    const row = await get(`SELECT * FROM income_entries WHERE id = :id`, { id: incomeId });
+    await audit({
       userId: req.ctx.user.id,
       action: 'create',
       entity: 'income_entry',
@@ -133,19 +132,19 @@ router.post(
 router.post(
   '/:kind(expenses|income)/:id/void',
   need('cashbook'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const table = req.params.kind === 'expenses' ? 'expenses' : 'income_entries';
     const id = intParam(req.params.id);
     const reason = req.body?.reason;
     if (!reason) return res.status(400).json({ error: 'ต้องระบุเหตุผลการยกเลิก' });
-    const before = get(`SELECT * FROM ${table} WHERE id = :id`, { id });
+    const before = await get(`SELECT * FROM ${table} WHERE id = :id`, { id });
     if (!before) return res.status(404).json({ error: 'ไม่พบรายการ' });
     if (before.is_void) return res.status(400).json({ error: 'รายการนี้ถูกยกเลิกไปแล้ว' });
-    assertDayOpen(before.entry_date, req.ctx.user);
+    await assertDayOpen(before.entry_date, req.ctx.user);
 
-    run(`UPDATE ${table} SET is_void = 1, void_reason = :r WHERE id = :id`, { id, r: reason });
-    const after = get(`SELECT * FROM ${table} WHERE id = :id`, { id });
-    audit({
+    await run(`UPDATE ${table} SET is_void = 1, void_reason = :r WHERE id = :id`, { id, r: reason });
+    const after = await get(`SELECT * FROM ${table} WHERE id = :id`, { id });
+    await audit({
       userId: req.ctx.user.id,
       action: 'void',
       entity: table === 'expenses' ? 'expense' : 'income_entry',
@@ -164,16 +163,16 @@ router.post(
 router.get(
   '/closing',
   need('daily_closing'),
-  wrap((req, res) => {
-    res.json(closingPreview(req.query.date ?? today()));
+  wrap(async (req, res) => {
+    res.json(await closingPreview(req.query.date ?? today()));
   }),
 );
 
 router.post(
   '/closing',
   need('daily_closing'),
-  wrap((req, res) => {
-    const row = closeDay(
+  wrap(async (req, res) => {
+    const row = await closeDay(
       {
         date: req.body?.date ?? today(),
         actualCash: intParam(req.body?.actual_cash, 0),
@@ -189,17 +188,17 @@ router.post(
 router.post(
   '/closing/reopen',
   need('settings_manage'),
-  wrap((req, res) => {
-    res.json(reopenDay({ date: req.body?.date, reason: req.body?.reason }, req.ctx));
+  wrap(async (req, res) => {
+    res.json(await reopenDay({ date: req.body?.date, reason: req.body?.reason }, req.ctx));
   }),
 );
 
 router.get(
   '/closings',
   need('daily_closing'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     res.json({
-      items: all(
+      items: await all(
         `SELECT dc.*, u.full_name AS closed_by_name FROM daily_closings dc
          LEFT JOIN users u ON u.id = dc.closed_by
          ORDER BY closing_date DESC LIMIT :limit`,
@@ -212,20 +211,20 @@ router.get(
 router.get(
   '/export',
   need('cashbook'),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const from = req.query.from ?? today();
     const to = req.query.to ?? today();
     const rows = [
-      ...all(
+      ...(await all(
         `SELECT entry_date, 'รายรับ' AS kind, category, amount, description, is_void
          FROM income_entries WHERE entry_date BETWEEN :from AND :to`,
         { from, to },
-      ),
-      ...all(
+      )),
+      ...(await all(
         `SELECT entry_date, 'รายจ่าย' AS kind, category, amount, description, is_void
          FROM expenses WHERE entry_date BETWEEN :from AND :to`,
         { from, to },
-      ),
+      )),
     ].sort((a, b) => a.entry_date.localeCompare(b.entry_date));
 
     sendCsv(res, `cashbook-${from}-${to}.csv`, rows, [
@@ -240,8 +239,8 @@ router.get(
 );
 
 /** ข้อ 14: รายการที่ปิดยอดประจำวันแล้ว การแก้ไขต้องผ่านเจ้าของ */
-function assertDayOpen(date, user) {
-  const closed = get(`SELECT 1 AS x FROM daily_closings WHERE closing_date = :d`, { d: date });
+async function assertDayOpen(date, user) {
+  const closed = await get(`SELECT 1 AS x FROM daily_closings WHERE closing_date = :d`, { d: date });
   if (closed && user.role !== 'owner') {
     throw Object.assign(
       new Error(`วันที่ ${date} ปิดยอดแล้ว การแก้ไขต้องได้รับอนุมัติจากเจ้าของ`),

@@ -1,4 +1,4 @@
-import { all, get, run, tx, DISBURSE_CATEGORY, CAPITAL_OUT_CATEGORY, CAPITAL_IN_CATEGORY } from '../db/index.js';
+import { all, get, run, insert, tx, DISBURSE_CATEGORY, CAPITAL_OUT_CATEGORY, CAPITAL_IN_CATEGORY } from '../db/index.js';
 import { today, nowISO, monthRange, yearRange, addDays } from '../lib/time.js';
 import { audit } from '../lib/audit.js';
 
@@ -13,11 +13,11 @@ import { audit } from '../lib/audit.js';
  * สำคัญ (เกณฑ์รับมอบงาน ข้อ 18): เงินต้นรับคืนไม่ถูกนับเป็นรายได้
  * และ "เงินปล่อยใหม่" ไม่ถูกนับเป็นค่าใช้จ่ายดำเนินงาน เพราะเป็นเงินทุน ไม่ใช่ต้นทุน
  */
-export function financeSummary({ from, to, employeeId = null }) {
+export async function financeSummary({ from, to, employeeId = null }) {
   const params = { from, to, emp: employeeId };
   const empJoin = employeeId ? 'AND c.employee_id = :emp' : '';
 
-  const pay = get(
+  const payP = get(
     `SELECT
        COALESCE(SUM(p.amount_paid), 0)      AS cash_from_debtors,
        COALESCE(SUM(p.interest_amount), 0)  AS interest_income,
@@ -31,7 +31,7 @@ export function financeSummary({ from, to, employeeId = null }) {
     params,
   );
 
-  const income = get(
+  const incomeP = get(
     `SELECT
        COALESCE(SUM(CASE WHEN category = 'doc_fee' THEN amount ELSE 0 END), 0) AS doc_fee_income,
        COALESCE(SUM(CASE WHEN category = :capIn  THEN amount ELSE 0 END), 0) AS capital_in,
@@ -42,7 +42,7 @@ export function financeSummary({ from, to, employeeId = null }) {
     { from, to, capIn: CAPITAL_IN_CATEGORY },
   );
 
-  const exp = get(
+  const expP = get(
     `SELECT
        COALESCE(SUM(CASE WHEN e.category = :disb  THEN e.amount ELSE 0 END), 0) AS disbursed,
        COALESCE(SUM(CASE WHEN e.category = :capOut THEN e.amount ELSE 0 END), 0) AS capital_out,
@@ -54,7 +54,7 @@ export function financeSummary({ from, to, employeeId = null }) {
     { from, to, disb: DISBURSE_CATEGORY, capOut: CAPITAL_OUT_CATEGORY, emp: employeeId },
   );
 
-  const contracts = get(
+  const contractsP = get(
     `SELECT
        COALESCE(SUM(principal_amount), 0) AS principal_issued,
        COALESCE(SUM(cash_disbursed), 0)   AS cash_disbursed,
@@ -65,13 +65,18 @@ export function financeSummary({ from, to, employeeId = null }) {
     { from, to, emp: employeeId },
   );
 
-  const outstanding = get(
+  const outstandingP = get(
     `SELECT COALESCE(SUM(principal_remaining), 0) AS principal_outstanding,
             COUNT(*) AS active_contracts
      FROM contracts WHERE status = 'active'
        ${employeeId ? 'AND employee_id = :emp' : ''}`,
     { emp: employeeId },
   );
+
+  // ทั้ง 5 คำสั่งไม่ขึ้นต่อกัน จึงยิงพร้อมกันเพื่อลดเวลารอบนฐานข้อมูลคลาวด์
+  const [pay, income, exp, contracts, outstanding] = await Promise.all([
+    payP, incomeP, expP, contractsP, outstandingP,
+  ]);
 
   const totalIn = pay.cash_from_debtors + income.total_income_entries;
   const totalOut = exp.total_expense;
@@ -112,15 +117,15 @@ export function financeSummary({ from, to, employeeId = null }) {
 }
 
 /** ยอดที่ควรเก็บ / เก็บจริง / ค้าง ในช่วงเวลา (ข้อ 11) */
-export function collectionSummary({ from, to, employeeId = null }) {
-  const expected = get(
+export async function collectionSummary({ from, to, employeeId = null }) {
+  const expected = await get(
     `SELECT COALESCE(SUM(i.due_amount), 0) AS expected, COUNT(*) AS due_count
      FROM installments i JOIN contracts c ON c.id = i.contract_id
      WHERE i.due_date BETWEEN :from AND :to AND c.status IN ('active','completed')
        ${employeeId ? 'AND c.employee_id = :emp' : ''}`,
     { from, to, emp: employeeId },
   );
-  const collected = get(
+  const collected = await get(
     `SELECT COALESCE(SUM(p.amount_paid), 0) AS collected
      FROM payments p JOIN contracts c ON c.id = p.contract_id
      WHERE p.is_void = 0 AND p.paid_date BETWEEN :from AND :to
@@ -136,11 +141,13 @@ export function collectionSummary({ from, to, employeeId = null }) {
 }
 
 /** จำนวนลูกหนี้แยกตามสถานะ (ข้อ 5 / ข้อ 11) */
-export function debtorStatusCounts({ employeeId = null, asOf = today() } = {}) {
-  const threshold =
-    Number(get(`SELECT value FROM settings WHERE key='overdue_days_threshold'`)?.value) || 3;
+export async function debtorStatusCounts({ employeeId = null, asOf = today() } = {}) {
+  const thresholdRow = await get(
+    `SELECT value FROM settings WHERE key = 'overdue_days_threshold'`,
+  );
+  const threshold = Number(thresholdRow?.value) || 3;
 
-  const rows = all(
+  const rows = await all(
     `SELECT c.id, c.status,
        (SELECT COUNT(*) FROM installments i
           WHERE i.contract_id = c.id AND i.due_date <= :asOf
@@ -174,8 +181,8 @@ export function debtorStatusCounts({ employeeId = null, asOf = today() } = {}) {
 }
 
 /** ลูกหนี้ที่ต้องเก็บวันนี้ พร้อมข้อมูลสำหรับปุ่มรับชำระ (ข้อ 5) */
-export function dueToday({ date = today(), employeeId = null, limit = 500 } = {}) {
-  return all(
+export async function dueToday({ date = today(), employeeId = null, limit = 500 } = {}) {
+  return await all(
     `SELECT c.id AS contract_id, c.contract_no, c.type, c.principal_remaining,
             d.id AS debtor_id, d.code AS debtor_code, d.full_name AS debtor_name, d.phone,
             e.full_name AS employee_name,
@@ -205,8 +212,8 @@ export function dueToday({ date = today(), employeeId = null, limit = 500 } = {}
 }
 
 /** รายงานรายพนักงาน (ข้อ 11) */
-export function employeeReport({ from, to }) {
-  return all(
+export async function employeeReport({ from, to }) {
+  const rows = await all(
     `SELECT e.id, e.code, e.full_name, e.area,
        (SELECT COUNT(*) FROM debtors d WHERE d.employee_id = e.id) AS debtor_count,
        (SELECT COALESCE(SUM(p.amount_paid), 0) FROM payments p
@@ -228,53 +235,57 @@ export function employeeReport({ from, to }) {
      FROM employees e WHERE e.is_active = 1
      ORDER BY collected DESC`,
     { from, to, disb: DISBURSE_CATEGORY },
-  ).map((r) => ({ ...r, outstanding: Math.max(0, r.expected - r.collected) }));
+  );
+  return rows.map((r) => ({ ...r, outstanding: Math.max(0, Number(r.expected) - Number(r.collected)) }));
 }
 
 /** กราฟรายวันในช่วงเวลา (ข้อ 11) */
-export function dailySeries({ from, to }) {
-  const out = [];
+export async function dailySeries({ from, to }) {
+  const dates = [];
   let cursor = from;
   let guard = 0;
   while (cursor <= to && guard++ < 400) {
-    const s = financeSummary({ from: cursor, to: cursor });
-    out.push({
-      date: cursor,
-      total_in: s.total_in,
-      total_out: s.total_out,
-      net_cash: s.net_cash,
-      real_income: s.real_income,
-      operating_expense: s.operating_expense,
-      net_profit: s.net_profit,
-      principal_back: s.principal_back,
-    });
+    dates.push(cursor);
     cursor = addDays(cursor, 1);
   }
-  return out;
+  // เรียกพร้อมกัน ไม่เรียงทีละวัน เพราะบนฐานข้อมูลคลาวด์แต่ละครั้งมีค่า latency
+  const summaries = await Promise.all(
+    dates.map((d) => financeSummary({ from: d, to: d })),
+  );
+  return summaries.map((s, i) => ({
+    date: dates[i],
+    total_in: s.total_in,
+    total_out: s.total_out,
+    net_cash: s.net_cash,
+    real_income: s.real_income,
+    operating_expense: s.operating_expense,
+    net_profit: s.net_profit,
+    principal_back: s.principal_back,
+  }));
 }
 
 /** สรุป 12 เดือนของปี (ข้อ 11 รายปี) */
-export function monthlySeries(year) {
-  const out = [];
-  for (let m = 1; m <= 12; m++) {
-    const ym = `${year}-${String(m).padStart(2, '0')}`;
-    const { from, to } = monthRange(ym);
-    const s = financeSummary({ from, to });
-    out.push({ month: ym, ...s });
-  }
-  return out;
+export async function monthlySeries(year) {
+  const months = Array.from(
+    { length: 12 },
+    (_, i) => `${year}-${String(i + 1).padStart(2, '0')}`,
+  );
+  const summaries = await Promise.all(
+    months.map((ym) => financeSummary(monthRange(ym))),
+  );
+  return summaries.map((s, i) => ({ month: months[i], ...s }));
 }
 
 /** รายได้/ค่าใช้จ่ายแยกประเภท (ข้อ 11 กราฟ) */
-export function breakdown({ from, to }) {
-  const expenses = all(
+export async function breakdown({ from, to }) {
+  const expenses = await all(
     `SELECT category, COALESCE(SUM(amount), 0) AS amount
      FROM expenses WHERE is_void = 0 AND entry_date BETWEEN :from AND :to
        AND category NOT IN (:disb, :capOut)
      GROUP BY category ORDER BY amount DESC`,
     { from, to, disb: DISBURSE_CATEGORY, capOut: CAPITAL_OUT_CATEGORY },
   );
-  const s = financeSummary({ from, to });
+  const s = await financeSummary({ from, to });
   const income = [
     { category: 'ดอกเบี้ย', amount: s.interest_income },
     { category: 'ค่าทำเอกสาร', amount: s.doc_fee_income },
@@ -285,19 +296,19 @@ export function breakdown({ from, to }) {
 
 // ---- ปิดยอดประจำวัน (ข้อ 10.3) ---------------------------------------------
 
-export function closingPreview(date) {
-  const s = financeSummary({ from: date, to: date });
-  const existing = get(`SELECT * FROM daily_closings WHERE closing_date = :d`, { d: date });
+export async function closingPreview(date) {
+  const s = await financeSummary({ from: date, to: date });
+  const existing = await get(`SELECT * FROM daily_closings WHERE closing_date = :d`, { d: date });
   return { date, summary: s, existing };
 }
 
-export function closeDay({ date, actualCash, note }, ctx) {
-  return tx(() => {
-    const existing = get(`SELECT * FROM daily_closings WHERE closing_date = :d`, { d: date });
+export async function closeDay({ date, actualCash, note }, ctx) {
+  return await tx(async () => {
+    const existing = await get(`SELECT * FROM daily_closings WHERE closing_date = :d`, { d: date });
     if (existing) throw Object.assign(new Error('วันนี้ปิดยอดไปแล้ว'), { status: 400 });
-    const s = financeSummary({ from: date, to: date });
+    const s = await financeSummary({ from: date, to: date });
     const difference = actualCash - s.net_cash;
-    run(
+    await run(
       `INSERT INTO daily_closings
          (closing_date, system_cash, actual_cash, difference, total_in, total_out,
           real_income, net_profit, principal_back, note, closed_by, closed_at)
@@ -317,8 +328,8 @@ export function closeDay({ date, actualCash, note }, ctx) {
         now: nowISO(),
       },
     );
-    const row = get(`SELECT * FROM daily_closings WHERE closing_date = :d`, { d: date });
-    audit({
+    const row = await get(`SELECT * FROM daily_closings WHERE closing_date = :d`, { d: date });
+    await audit({
       userId: ctx?.user?.id,
       action: 'close_day',
       entity: 'daily_closing',
@@ -330,13 +341,13 @@ export function closeDay({ date, actualCash, note }, ctx) {
   });
 }
 
-export function reopenDay({ date, reason }, ctx) {
-  return tx(() => {
-    const row = get(`SELECT * FROM daily_closings WHERE closing_date = :d`, { d: date });
+export async function reopenDay({ date, reason }, ctx) {
+  return await tx(async () => {
+    const row = await get(`SELECT * FROM daily_closings WHERE closing_date = :d`, { d: date });
     if (!row) throw Object.assign(new Error('ยังไม่ได้ปิดยอดวันนี้'), { status: 400 });
     if (!reason) throw Object.assign(new Error('ต้องระบุเหตุผล'), { status: 400 });
-    run(`DELETE FROM daily_closings WHERE closing_date = :d`, { d: date });
-    audit({
+    await run(`DELETE FROM daily_closings WHERE closing_date = :d`, { d: date });
+    await audit({
       userId: ctx?.user?.id,
       action: 'reopen_day',
       entity: 'daily_closing',

@@ -2,6 +2,7 @@ import {
   all,
   get,
   run,
+  insert,
   tx,
   nextCounter,
   getSettingInt,
@@ -71,8 +72,8 @@ export function buildSchedule({
 }
 
 /** สรุปตัวเลขให้ผู้ใช้ตรวจก่อนยืนยัน (ข้อ 7.1 "แสดงเงินที่ลูกค้าได้รับจริงก่อนยืนยัน") */
-export function previewContract(input) {
-  const p = normalizeContractInput(input);
+export async function previewContract(input) {
+  const p = await normalizeContractInput(input);
   const schedule = buildSchedule(p);
   const totalDue = schedule.reduce((s, r) => s + r.due_amount, 0);
   const totalInterest = schedule.reduce((s, r) => s + r.interest_due, 0);
@@ -111,7 +112,7 @@ export function previewContract(input) {
   };
 }
 
-function normalizeContractInput(input) {
+async function normalizeContractInput(input) {
   const type = input.type;
   if (!CONTRACT_TYPES[type]) throw new BusinessError('ประเภทสัญญาไม่ถูกต้อง');
 
@@ -132,11 +133,11 @@ function normalizeContractInput(input) {
 
   const docFee =
     input.docFee === undefined || input.docFee === null
-      ? getSettingInt('doc_fee')
+      ? await getSettingInt('doc_fee')
       : assertNonNegative(input.docFee, 'ค่าทำเอกสาร');
   const deductFirst =
     input.deductFirst === undefined
-      ? getSettingInt('deduct_first_installment') === 1
+      ? (await getSettingInt('deduct_first_installment')) === 1
       : Boolean(input.deductFirst);
 
   return {
@@ -156,9 +157,9 @@ function normalizeContractInput(input) {
 }
 
 /** เลขที่สัญญา: CT-YYYYMM-#### (ไม่ซ้ำ — ข้อ 14) */
-function newContractNo(dateStr) {
+async function newContractNo(dateStr) {
   const ym = dateStr.slice(0, 7).replace('-', '');
-  const n = nextCounter(`contract:${ym}`);
+  const n = await nextCounter(`contract:${ym}`);
   return `CT-${ym}-${String(n).padStart(4, '0')}`;
 }
 
@@ -170,20 +171,20 @@ function newContractNo(dateStr) {
  *   3. รายรับ "ค่าทำเอกสาร" แยกประเภท (ข้อ 14)
  *   4. รายจ่ายเงินปล่อยใหม่เป็นกระแสเงินสดออก (ข้อ 14)
  */
-export function createContract(input, ctx) {
-  return tx(() => createContractInTx(input, ctx));
+export async function createContract(input, ctx) {
+  return await tx(() => createContractInTx(input, ctx));
 }
 
-export function createContractInTx(input, ctx) {
-  const preview = previewContract(input);
-  const debtor = get(`SELECT * FROM debtors WHERE id = :id`, { id: input.debtorId });
+export async function createContractInTx(input, ctx) {
+  const preview = await previewContract(input);
+  const debtor = await get(`SELECT * FROM debtors WHERE id = :id`, { id: input.debtorId });
   if (!debtor) throw new BusinessError('ไม่พบลูกหนี้');
   if (debtor.status === 'disabled') throw new BusinessError('ลูกหนี้รายนี้ถูกงดใช้งาน');
 
   const now = nowISO();
-  const contractNo = input.contractNo || newContractNo(preview.startDate);
+  const contractNo = input.contractNo || (await newContractNo(preview.startDate));
 
-  const info = run(
+  const contractId = await insert(
     `INSERT INTO contracts
        (contract_no, debtor_id, employee_id, type, principal_amount, installment_amount,
         interest_per_inst, num_installments, period_unit, start_date, doc_fee,
@@ -211,10 +212,9 @@ export function createContractInTx(input, ctx) {
       now,
     },
   );
-  const contractId = Number(info.lastInsertRowid);
 
   for (const row of preview.schedule) {
-    run(
+    await run(
       `INSERT INTO installments (contract_id, seq, due_date, due_amount, interest_due, principal_due)
        VALUES (:cid, :seq, :due, :amt, :i, :p)`,
       {
@@ -230,7 +230,7 @@ export function createContractInTx(input, ctx) {
 
   // 3) ค่าทำเอกสาร -> รายรับแยกประเภท
   if (preview.doc_fee > 0) {
-    run(
+    await run(
       `INSERT INTO income_entries (entry_date, category, amount, description, contract_id, debtor_id, created_by, created_at)
        VALUES (:d, 'doc_fee', :amt, :desc, :cid, :did, :uid, :now)`,
       {
@@ -248,7 +248,7 @@ export function createContractInTx(input, ctx) {
   // 4) เงินปล่อยใหม่ -> กระแสเงินสดออก (บันทึกแบบยอดเต็ม แล้วรับค่าทำเอกสาร/งวดแรกเป็นเงินเข้า
   //    เงินสดสุทธิจึงเท่ากับเงินที่จ่ายให้ลูกค้าจริง)
   if (preview.gross_out > 0) {
-    run(
+    await run(
       `INSERT INTO expenses (entry_date, category, amount, description, contract_id, employee_id, created_by, created_at)
        VALUES (:d, :cat, :amt, :desc, :cid, :emp, :uid, :now)`,
       {
@@ -269,11 +269,11 @@ export function createContractInTx(input, ctx) {
   // 2) งวดแรกถูกหัก ณ วันทำสัญญา -> บันทึกเป็นรายการชำระจริง พร้อมแยกต้น/ดอก
   let firstPayment = null;
   if (preview.first_installment > 0) {
-    firstPayment = recordFirstInstallment({ contractId, ctx });
+    firstPayment = await recordFirstInstallment({ contractId, ctx });
   }
 
-  const contract = getContract(contractId);
-  audit({
+  const contract = await getContract(contractId);
+  await audit({
     userId: ctx?.user?.id,
     action: 'create',
     entity: 'contract',
@@ -286,8 +286,8 @@ export function createContractInTx(input, ctx) {
   return { contract, preview, firstPayment };
 }
 
-export function getContract(id) {
-  return get(
+export async function getContract(id) {
+  return await get(
     `SELECT c.*, d.full_name AS debtor_name, d.code AS debtor_code, d.phone AS debtor_phone,
             e.full_name AS employee_name
      FROM contracts c
@@ -298,13 +298,13 @@ export function getContract(id) {
   );
 }
 
-export function getContractByNo(no) {
-  const row = get(`SELECT id FROM contracts WHERE contract_no = :no`, { no });
-  return row ? getContract(row.id) : null;
+export async function getContractByNo(no) {
+  const row = await get(`SELECT id FROM contracts WHERE contract_no = :no`, { no });
+  return row ? await getContract(row.id) : null;
 }
 
-export function listInstallments(contractId) {
-  return all(
+export async function listInstallments(contractId) {
+  return await all(
     `SELECT * FROM installments WHERE contract_id = :cid ORDER BY seq`,
     { cid: contractId },
   );
@@ -315,10 +315,10 @@ export function listInstallments(contractId) {
  * - งวดปัจจุบัน, ยอดที่ควรจ่าย, ดอกเบี้ย/เงินต้นที่ควรตัด
  * - จำนวนงวดเต็มที่ชำระแล้ว และจำนวนวันที่จ่ายเฉพาะดอก (ข้อ 3.1)
  */
-export function contractSummary(contractId, asOfDate = today()) {
-  const contract = getContract(contractId);
+export async function contractSummary(contractId, asOfDate = today()) {
+  const contract = await getContract(contractId);
   if (!contract) return null;
-  const installments = listInstallments(contractId);
+  const installments = await listInstallments(contractId);
 
   const current = installments.find(
     (i) => i.interest_paid < i.interest_due || i.principal_paid < i.principal_due,
@@ -334,7 +334,7 @@ export function contractSummary(contractId, asOfDate = today()) {
     0,
   );
 
-  const stats = get(
+  const stats = await get(
     `SELECT
        COALESCE(SUM(CASE WHEN status = 'full'          THEN 1 ELSE 0 END), 0) AS full_count,
        COALESCE(SUM(CASE WHEN status = 'interest_only' THEN 1 ELSE 0 END), 0) AS interest_only_count,
@@ -366,26 +366,26 @@ export function contractSummary(contractId, asOfDate = today()) {
     arrears_amount: arrears,
     arrears_installments: overdue.length,
     principal_remaining: contract.principal_remaining,
-    paid_full_installments: stats.full_count,
-    interest_only_days: stats.interest_only_count,
-    partial_count: stats.partial_count,
-    total_paid: stats.total_paid,
-    total_interest_received: stats.total_interest,
-    total_principal_received: stats.total_principal,
+    paid_full_installments: Number(stats.full_count),
+    interest_only_days: Number(stats.interest_only_count),
+    partial_count: Number(stats.partial_count),
+    total_paid: Number(stats.total_paid),
+    total_interest_received: Number(stats.total_interest),
+    total_principal_received: Number(stats.total_principal),
     is_closed: contract.status !== 'active',
   };
 }
 
 /** ป้ายสถานะลูกหนี้จากพฤติกรรมการชำระ (ใช้ใน Dashboard ข้อ 5) */
-export function contractBehaviour(contractId, asOfDate = today()) {
-  const s = contractSummary(contractId, asOfDate);
+export async function contractBehaviour(contractId, asOfDate = today()) {
+  const s = await contractSummary(contractId, asOfDate);
   if (!s) return 'unknown';
   if (s.contract.status === 'completed') return 'completed';
   if (s.contract.status === 'closed_reyod') return 'reyod';
   if (s.contract.status === 'cancelled') return 'cancelled';
-  const threshold = getSettingInt('overdue_days_threshold') || 3;
+  const threshold = (await getSettingInt('overdue_days_threshold')) || 3;
   if (s.arrears_installments >= threshold) return 'overdue';
-  const last = get(
+  const last = await get(
     `SELECT status FROM payments WHERE contract_id = :cid AND is_void = 0
      ORDER BY paid_date DESC, id DESC LIMIT 1`,
     { cid: contractId },
@@ -400,9 +400,9 @@ export function contractBehaviour(contractId, asOfDate = today()) {
  * ยอดสัญญาใหม่ = เงินต้นคงเหลือเดิม + เงินเพิ่มใหม่
  * สัญญาเดิมปิดด้วยสถานะ "ปิดด้วยการรียอด" โดยไม่ลบข้อมูล และเชื่อมโยงกับสัญญาใหม่
  */
-export function reyod(input, ctx) {
-  return tx(() => {
-    const old = getContract(input.fromContractId);
+export async function reyod(input, ctx) {
+  return await tx(async () => {
+    const old = await getContract(input.fromContractId);
     if (!old) throw new BusinessError('ไม่พบสัญญาเดิม');
     if (old.status !== 'active') throw new BusinessError('สัญญาเดิมถูกปิดไปแล้ว');
 
@@ -412,10 +412,10 @@ export function reyod(input, ctx) {
     if (newPrincipal <= 0) throw new BusinessError('ยอดสัญญาใหม่ต้องมากกว่า 0');
 
     // ฐานการคำนวณเงินสดที่จ่ายให้ลูกค้า (ตั้งค่าได้ — ข้อ 9)
-    const basis = getSetting('reyod_cash_basis');
+    const basis = await getSetting('reyod_cash_basis');
     const grossOut = basis === 'full' ? newPrincipal : newMoney;
 
-    const created = createContractInTx(
+    const created = await createContractInTx(
       {
         debtorId: old.debtor_id,
         employeeId: input.employeeId ?? old.employee_id,
@@ -434,13 +434,13 @@ export function reyod(input, ctx) {
     );
 
     const now = nowISO();
-    run(
+    await run(
       `UPDATE contracts
          SET status = 'closed_reyod', closed_at = :now, principal_remaining = 0, updated_at = :now
        WHERE id = :id`,
       { id: old.id, now },
     );
-    run(
+    await run(
       `INSERT INTO contract_links
          (from_contract_id, to_contract_id, link_type, carried_principal, new_money, created_by, created_at)
        VALUES (:from, :to, 'reyod', :carried, :new, :uid, :now)`,
@@ -454,7 +454,7 @@ export function reyod(input, ctx) {
       },
     );
 
-    audit({
+    await audit({
       userId: ctx?.user?.id,
       action: 'reyod',
       entity: 'contract',
@@ -473,7 +473,7 @@ export function reyod(input, ctx) {
     });
 
     return {
-      old_contract: getContract(old.id),
+      old_contract: await getContract(old.id),
       new_contract: created.contract,
       preview: created.preview,
       carried_principal: carried,
@@ -483,16 +483,16 @@ export function reyod(input, ctx) {
 }
 
 /** ตัวอย่างตัวเลขก่อนยืนยันรียอด (ข้อ 9) */
-export function reyodPreview(input) {
-  const old = getContract(input.fromContractId);
+export async function reyodPreview(input) {
+  const old = await getContract(input.fromContractId);
   if (!old) throw new BusinessError('ไม่พบสัญญาเดิม');
-  const summary = contractSummary(old.id);
+  const summary = await contractSummary(old.id);
   const newMoney = assertNonNegative(input.newMoney ?? 0, 'เงินเพิ่มใหม่');
   const carried = old.principal_remaining;
-  const basis = getSetting('reyod_cash_basis');
+  const basis = await getSetting('reyod_cash_basis');
   const grossOut = basis === 'full' ? carried + newMoney : newMoney;
 
-  const preview = previewContract({
+  const preview = await previewContract({
     debtorId: old.debtor_id,
     type: input.type ?? old.type,
     principalAmount: carried + newMoney,
@@ -517,12 +517,12 @@ export function reyodPreview(input) {
 }
 
 /** ประวัติการรียอดของสัญญา (ข้อ 16) */
-export function contractChain(contractId) {
+export async function contractChain(contractId) {
   const chain = [];
   let cursor = contractId;
   // ย้อนกลับไปหาต้นสาย
   for (;;) {
-    const link = get(
+    const link = await get(
       `SELECT * FROM contract_links WHERE to_contract_id = :id`,
       { id: cursor },
     );
@@ -531,10 +531,10 @@ export function contractChain(contractId) {
   }
   // เดินหน้าไล่ลูกโซ่
   for (;;) {
-    const c = getContract(cursor);
+    const c = await getContract(cursor);
     if (!c) break;
     chain.push(c);
-    const link = get(
+    const link = await get(
       `SELECT * FROM contract_links WHERE from_contract_id = :id`,
       { id: cursor },
     );

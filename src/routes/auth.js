@@ -10,8 +10,8 @@ const router = Router();
 
 router.post(
   '/login',
-  wrap((req, res) => {
-    const { token, user } = login({
+  wrap(async (req, res) => {
+    const { token, user } = await login({
       username: req.body?.username,
       password: req.body?.password,
       ip: req.ctx.ip,
@@ -20,7 +20,7 @@ router.post(
     res.setHeader(
       'Set-Cookie',
       `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${
-        (getSettingInt('session_timeout_minutes') || 120) * 60
+        (await getSettingInt('session_timeout_minutes') || 120) * 60
       }${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`,
     );
     res.json({ user, permissions: permissionSummary(user) });
@@ -29,8 +29,8 @@ router.post(
 
 router.post(
   '/logout',
-  wrap((req, res) => {
-    logout(req.ctx.token, req.ctx);
+  wrap(async (req, res) => {
+    await logout(req.ctx.token, req.ctx);
     res.setHeader('Set-Cookie', `${COOKIE_NAME}=; Path=/; HttpOnly; Max-Age=0`);
     res.json({ ok: true });
   }),
@@ -38,18 +38,18 @@ router.post(
 
 router.post(
   '/change-password',
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     if (!req.ctx.user) return res.status(401).json({ error: 'กรุณาเข้าสู่ระบบ' });
-    const user = get(`SELECT * FROM users WHERE id = :id`, { id: req.ctx.user.id });
+    const user = await get(`SELECT * FROM users WHERE id = :id`, { id: req.ctx.user.id });
     if (!verifyPassword(req.body?.current_password, user.password_hash)) {
       return res.status(400).json({ error: 'รหัสผ่านเดิมไม่ถูกต้อง' });
     }
-    run(`UPDATE users SET password_hash = :h, updated_at = :now WHERE id = :id`, {
+    await run(`UPDATE users SET password_hash = :h, updated_at = :now WHERE id = :id`, {
       id: user.id,
       h: hashPassword(req.body?.new_password),
       now: nowISO(),
     });
-    audit({
+    await audit({
       userId: user.id,
       action: 'update',
       entity: 'user',

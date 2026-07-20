@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { mkdirSync } from 'node:fs';
 import { ROOT, PUBLIC_DIR, UPLOAD_DIR } from './lib/paths.js';
 
-import { db, getSettingInt } from './db/index.js';
+import { db, getSettingInt, isServerless } from './db/index.js';
 import { COOKIE_NAME, userFromToken, purgeSessions } from './lib/auth.js';
 import { permissionSummary } from './lib/permissions.js';
 import { publicUser } from './lib/auth.js';
@@ -20,9 +20,9 @@ import dashboardRoutes from './routes/dashboard.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-export function createApp() {
-  db(); // เตรียมฐานข้อมูล/สร้างตาราง
-  mkdirSync(UPLOAD_DIR, { recursive: true });
+export async function createApp() {
+  await db(); // เตรียมการเชื่อมต่อและสร้างตาราง
+  if (!isServerless()) mkdirSync(UPLOAD_DIR, { recursive: true });
 
   const app = express();
   app.disable('x-powered-by');
@@ -46,13 +46,13 @@ export function createApp() {
   // ผูกผู้ใช้ปัจจุบันเข้ากับ request
   app.use((req, _res, next) => {
     const token = req.cookies[COOKIE_NAME];
-    const user = userFromToken(token);
-    req.ctx = {
-      user,
-      token,
-      ip: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress,
-    };
-    next();
+    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress;
+    userFromToken(token)
+      .then((user) => {
+        req.ctx = { user, token, ip };
+        next();
+      })
+      .catch(next);
   });
 
   app.use('/api/auth', authRoutes);
@@ -63,12 +63,16 @@ export function createApp() {
     next();
   });
 
-  app.get('/api/me', (req, res) => {
-    res.json({
-      user: publicUser(req.ctx.user),
-      permissions: permissionSummary(req.ctx.user),
-      session_timeout_minutes: getSettingInt('session_timeout_minutes'),
-    });
+  app.get('/api/me', (req, res, next) => {
+    getSettingInt('session_timeout_minutes')
+      .then((timeout) => {
+        res.json({
+          user: publicUser(req.ctx.user),
+          permissions: permissionSummary(req.ctx.user),
+          session_timeout_minutes: timeout,
+        });
+      })
+      .catch(next);
   });
 
   app.use('/api/dashboard', dashboardRoutes);
@@ -98,14 +102,20 @@ export function createApp() {
     res.status(status).json({ error: err.message || 'เกิดข้อผิดพลาดภายในระบบ' });
   });
 
-  setInterval(purgeSessions, 15 * 60_000).unref();
+  // ล้าง session ที่หมดอายุเป็นระยะ (ไม่ทำบน Serverless เพราะ process ไม่อยู่ยาว)
+  if (!isServerless()) {
+    setInterval(() => {
+      purgeSessions().catch((err) => console.error('purgeSessions:', err.message));
+    }, 15 * 60_000).unref();
+  }
   return app;
 }
 
 const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(__dirname, 'server.js');
 if (isMain) {
   const port = Number(process.env.PORT || 3000);
-  createApp().listen(port, () => {
+  const app = await createApp();
+  app.listen(port, () => {
     console.log(`พันธมิตรเงินทุน — เปิดใช้งานที่ http://localhost:${port}`);
   });
 }
