@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f2f4f"/><stop offset="100%" stop-color="#0a1f36"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect x="72" y="150" width="76" height="76" rx="20" fill="#d99b2b"/>
+  <text x="110" y="205" font-family="system-ui,sans-serif" font-size="46" font-weight="700" fill="#0f2f4f" text-anchor="middle">฿</text>
+  <text x="176" y="206" font-family="system-ui,sans-serif" font-size="42" font-weight="700" fill="#ffffff">พันธมิตรเงินทุน</text>
+  <text x="72" y="320" font-family="system-ui,sans-serif" font-size="66" font-weight="800" fill="#ffffff">คิดดอก กางงวด ตามเก็บ</text>
+  <text x="72" y="400" font-family="system-ui,sans-serif" font-size="66" font-weight="800" fill="#d99b2b">จบในมือถือ</text>
+  <text x="72" y="470" font-family="system-ui,sans-serif" font-size="30" fill="#cfe0f0">ระบบบริหารลูกหนี้ สัญญา รับชำระ รียอด และรายงานกำไรสุทธิ</text>
+  <text x="72" y="530" font-family="system-ui,sans-serif" font-size="26" fill="#8fb0cc">รายวัน 24 งวด · รายเดือน · ดอกลอย</text>
+</svg>
