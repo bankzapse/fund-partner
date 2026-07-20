@@ -111,14 +111,51 @@ case "$DB_URL" in
   *YOUR-PASSWORD*|*'[YOUR-PASSWORD]'*) die "ยังไม่ได้แทนที่ [YOUR-PASSWORD] ด้วยรหัสผ่านจริง" ;;
 esac
 if [[ "$DB_URL" != *:6543* ]]; then
-  warn "ไม่ใช่พอร์ต 6543 — Serverless ควรใช้แบบ Connection pooling"
+  warn "ไม่ใช่พอร์ต 6543 — Serverless ควรใช้แบบ Transaction pooler"
   printf '  จะใช้ต่อไปหรือไม่ (y/N)? '; read -r yn
-  [[ "$yn" =~ ^[Yy]$ ]] || die "ยกเลิก — กลับไปเลือกแท็บ Connection pooling"
+  [[ "$yn" =~ ^[Yy]$ ]] || die "ยกเลิก — กลับไปเลือกแท็บ Transaction pooler"
+fi
+
+# Dedicated pooler เป็น IPv6 ซึ่ง Vercel ต่อไม่ถึง ต้องใช้ Shared pooler ที่เป็น IPv4
+if [[ "$DB_URL" == *"db."*".supabase.co"* ]]; then
+  cat >&2 <<'MSG'
+
+  ✗ นี่คือ Dedicated pooler (host เป็น db.xxx.supabase.co) ซึ่งใช้ IPv6
+    Vercel เป็นเครือข่าย IPv4 จะต่อไม่ติด
+
+    กลับไปที่หน้า Connect แล้วสลับเป็น "Shared pooler"
+    ของที่ถูกต้อง host จะเป็น  aws-0-<region>.pooler.supabase.com
+    และ user จะเป็น            postgres.<project-ref>
+
+MSG
+  exit 1
+fi
+
+# ตรวจว่ารหัสผ่านมีอักขระพิเศษที่ยังไม่ได้ percent-encode หรือไม่
+# JS ยอมรับ URL ที่ผิดรูปแบบโดยตีความ host เพี้ยน จึงต้องตรวจ host และพอร์ตด้วย
+if ! node -e '
+  const u = new URL(process.argv[1]);
+  const hostOk = /\.supabase\.(com|co)$/.test(u.hostname);
+  const portOk = u.port !== "";
+  if (!hostOk || !portOk) process.exit(1);
+' "$DB_URL" 2>/dev/null; then
+  cat >&2 <<'MSG'
+
+  ✗ อ่าน connection string ไม่ออก
+
+    มักเกิดจากรหัสผ่านมีอักขระพิเศษ (@ : / ? # เป็นต้น) ซึ่งต้องแปลงก่อน
+    แปลงได้ด้วยคำสั่งนี้ แล้วเอาผลลัพธ์ไปใส่แทนรหัสผ่านในสตริง:
+
+        node -e "console.log(encodeURIComponent(process.argv[1]))" 'รหัสผ่านของคุณ'
+
+MSG
+  exit 1
 fi
 ok "connection string: $(printf '%s' "$DB_URL" | mask_url)"
 
 # เดา project ref จากชื่อผู้ใช้ (รูปแบบ postgres.<ref>) เพื่อประกอบเป็น SUPABASE_URL
 PROJECT_REF=$(printf '%s' "$DB_URL" | sed -nE 's#^postgres(ql)?://postgres\.([a-z0-9]+):.*#\2#p')
+[ -n "$PROJECT_REF" ] || PROJECT_REF=$(printf '%s' "$DB_URL" | sed -nE 's#.*@db\.([a-z0-9]+)\.supabase\.co.*#\1#p')
 if [ -n "$PROJECT_REF" ]; then
   SUPA_URL="https://${PROJECT_REF}.supabase.co"
   ok "Supabase URL: $SUPA_URL"
