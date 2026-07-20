@@ -19,7 +19,8 @@ set -euo pipefail
 SCOPE="${VERCEL_SCOPE:-chao-dee}"
 ENV_FILE=".env.production.local"
 BUCKET="fund-partner"
-VC="npx --no-install vercel"
+VERCEL_VERSION="${VERCEL_VERSION:-56}"
+VC=""   # กำหนดค่าจริงใน ensure_vercel_cli
 
 cd "$(dirname "$0")/.."
 
@@ -29,12 +30,57 @@ warn() { printf '  \033[33m!\033[0m %s\n' "$*"; }
 die()  { printf '\n\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
 # ---------------------------------------------------------------- 1. ตรวจสอบ
+# หา Vercel CLI ตามลำดับ: ในโปรเจกต์ > ติดตั้งทั่วเครื่อง > ดาวน์โหลดชั่วคราวผ่าน npx
+ensure_vercel_cli() {
+  if [ -x node_modules/.bin/vercel ]; then
+    VC="node_modules/.bin/vercel"
+    ok "Vercel CLI: ในโปรเจกต์"
+  elif command -v vercel >/dev/null 2>&1; then
+    VC="vercel"
+    ok "Vercel CLI: ติดตั้งไว้ทั้งเครื่อง"
+  else
+    warn "ไม่พบ Vercel CLI — กำลังติดตั้งลงโปรเจกต์ (ครั้งเดียว อาจใช้เวลาสักครู่)"
+    if ! npm install --no-save "vercel@${VERCEL_VERSION}" >/tmp/fp-npm.log 2>&1; then
+      # เครื่องที่เคยรัน sudo npm install จะมีไฟล์ของ root ค้างใน ~/.npm ทำให้ติดตั้งไม่ได้
+      if grep -qE "EACCES|EEXIST" /tmp/fp-npm.log; then
+        warn "แคชของ npm มีปัญหาสิทธิ์ — ลองใหม่โดยใช้แคชชั่วคราว"
+        TMP_CACHE=$(mktemp -d)
+        npm install --no-save --cache "$TMP_CACHE" "vercel@${VERCEL_VERSION}" >/tmp/fp-npm.log 2>&1 || {
+          rm -rf "$TMP_CACHE"
+          printf '\n' >&2
+          tail -5 /tmp/fp-npm.log >&2
+          die "ติดตั้ง Vercel CLI ไม่สำเร็จ
+
+  แคชของ npm เสียสิทธิ์ ทำให้ติดตั้งอะไรไม่ได้เลยทั้งเครื่อง แก้ถาวรด้วย:
+      sudo chown -R $(id -u):$(id -g) ~/.npm
+  แล้วรันสคริปต์นี้ใหม่"
+        }
+        rm -rf "$TMP_CACHE"
+      else
+        tail -5 /tmp/fp-npm.log >&2
+        die "ติดตั้ง Vercel CLI ไม่สำเร็จ — ดูรายละเอียดใน /tmp/fp-npm.log"
+      fi
+    fi
+    [ -x node_modules/.bin/vercel ] || die "ติดตั้ง Vercel CLI แล้วแต่เรียกใช้ไม่ได้"
+    VC="node_modules/.bin/vercel"
+    ok "ติดตั้ง Vercel CLI แล้ว"
+  fi
+}
+
 say "ตรวจสอบเครื่องมือ"
 command -v node >/dev/null || die "ไม่พบ Node.js"
-$VC whoami --scope "$SCOPE" >/dev/null 2>&1 || die "ยังไม่ได้เข้าสู่ระบบ Vercel — รัน: npx vercel login"
-ok "Vercel: $($VC whoami --scope "$SCOPE" 2>/dev/null | tail -1)"
-[ -f .vercel/project.json ] || die "ยังไม่ได้เชื่อมโปรเจกต์ — รัน: npx vercel link"
-ok "โปรเจกต์เชื่อมแล้ว"
+[ -d node_modules ] || die "ยังไม่ได้ติดตั้ง dependency — รัน: npm install"
+ok "Node.js $(node -v)"
+ensure_vercel_cli
+
+WHO=$($VC whoami --scope "$SCOPE" 2>/dev/null | tail -1)
+if [ -z "$WHO" ] || [ "$WHO" = "Error" ]; then
+  die "ยังไม่ได้เข้าสู่ระบบ Vercel — รัน: $VC login"
+fi
+ok "Vercel: $WHO"
+
+[ -f .vercel/project.json ] || die "ยังไม่ได้เชื่อมโปรเจกต์ — รัน: $VC link --scope $SCOPE --project fund-partner"
+ok "โปรเจกต์เชื่อมกับ Vercel แล้ว"
 
 # ---------------------------------------------------- 2. สร้างฐานข้อมูล Supabase
 say "สร้างฐานข้อมูล Supabase"
