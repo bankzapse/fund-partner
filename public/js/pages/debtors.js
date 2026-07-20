@@ -1,8 +1,6 @@
 // ระบบลูกหนี้ — SRS ข้อ 6
 import {
-  api, el, clear, table, badge, stat, field, modal, toast, toastError, baht, thaiDate,
-  can, DEBTOR_STATUS, CONTRACT_STATUS, CONTRACT_TYPE, BEHAVIOUR, PAYMENT_STATUS,
-  readFileAsDataUrl,
+  api, el, clear, table, badge, stat, field, modal, toast, toastError, baht, thaiDate, can, DEBTOR_STATUS, CONTRACT_STATUS, CONTRACT_TYPE, BEHAVIOUR, PAYMENT_STATUS, readFileAsDataUrl, skTable,
 } from '../core.js';
 
 export async function renderDebtors() {
@@ -17,7 +15,7 @@ export async function renderDebtors() {
   const list = el('div', { class: 'card' });
 
   async function load() {
-    clear(list).append(el('div', { class: 'empty' }, 'กำลังโหลด…'));
+    clear(list).append(skTable(6, 6));
     const q = encodeURIComponent(search.value.trim());
     const data = await api.get(`/api/debtors?q=${q}&status=${statusSel.value}`);
     const rows = data.items.map((d) =>

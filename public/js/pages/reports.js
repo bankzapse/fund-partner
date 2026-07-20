@@ -1,7 +1,6 @@
 // ระบบรายงาน — SRS ข้อ 11 และ ข้อ 16
 import {
-  api, el, clear, table, badge, stat, toast, toastError, baht, thaiDate, thaiMonth,
-  todayISO, can, barChart,
+  api, el, clear, table, badge, stat, toast, toastError, baht, thaiDate, thaiMonth, todayISO, can, barChart, skCard,
 } from '../core.js';
 
 const TABS = [
@@ -60,7 +59,7 @@ export async function renderReports() {
   }
 
   async function load() {
-    clear(body).append(el('div', { class: 'empty' }, 'กำลังโหลด…'));
+    clear(body).append(skCard({ rows: 6, cols: 6 }));
     try {
       clear(body).append(await renderTab(active, query(), { dateInput, monthInput, yearInput }));
     } catch (err) {

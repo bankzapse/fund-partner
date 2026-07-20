@@ -1,7 +1,6 @@
 // ระบบรายรับ-รายจ่ายประจำวัน และการปิดยอด — SRS ข้อ 10
 import {
-  api, el, clear, table, badge, stat, field, modal, toast, toastError, baht, toSatang,
-  thaiDate, todayISO, can, PAYMENT_STATUS, confirmWithReason, readFileAsDataUrl,
+  api, el, clear, table, badge, stat, field, modal, toast, toastError, baht, toSatang, thaiDate, todayISO, can, PAYMENT_STATUS, confirmWithReason, readFileAsDataUrl, skCard,
 } from '../core.js';
 
 export async function renderCashbook() {
@@ -10,7 +9,7 @@ export async function renderCashbook() {
   const body = el('div', {});
 
   async function load() {
-    clear(body).append(el('div', { class: 'empty' }, 'กำลังโหลด…'));
+    clear(body).append(skCard({ rows: 6, cols: 6 }));
     const d = await api.get(`/api/cashbook/day?date=${dateInput.value}`);
     clear(body).append(renderDay(d, load));
   }

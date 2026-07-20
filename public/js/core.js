@@ -262,6 +262,100 @@ export function readFileAsDataUrl(file) {
   });
 }
 
+// ---- โครงร่างระหว่างโหลด (shimmer) ----------------------------------------
+//
+// แสดงโครงที่มีรูปร่างใกล้เคียงเนื้อหาจริง ผู้ใช้จะรับรู้ว่าหน้ากำลังมา
+// และตำแหน่งไม่กระโดดเมื่อข้อมูลมาถึง
+
+/** แถบ shimmer หนึ่งชิ้น */
+export function sk(className = '', style = '') {
+  return el('span', { class: `sk ${className}`, style, 'aria-hidden': 'true' });
+}
+
+/** กล่องตัวเลขสรุประหว่างโหลด */
+export function skStat() {
+  return el('div', { class: 'sk-stat' }, sk('sk-label'), sk('sk-value'));
+}
+
+/** ตารางระหว่างโหลด */
+export function skTable(rows = 6, cols = 5) {
+  return el(
+    'div',
+    { class: 'table-wrap' },
+    Array.from({ length: rows }, () =>
+      el(
+        'div',
+        { class: 'sk-row' },
+        Array.from({ length: cols }, (_, i) =>
+          sk('', `flex:${i === 0 ? 2.4 : 1}`),
+        ),
+      ),
+    ),
+  );
+}
+
+/** การ์ดที่มีหัวข้อและตารางอยู่ข้างใน */
+export function skCard({ rows = 5, cols = 5 } = {}) {
+  return el('div', { class: 'sk-card' }, sk('sk-title'), skTable(rows, cols));
+}
+
+/**
+ * โครงร่างทั้งหน้า เลือกรูปแบบให้ใกล้เคียงหน้าปลายทาง
+ * kind: 'dashboard' | 'table' | 'detail' | 'form'
+ */
+export function skeleton(kind = 'table') {
+  const head = el(
+    'div',
+    { class: 'page-head' },
+    el('div', {}, sk('', 'height:24px;width:170px'), sk('', 'height:11px;width:250px;margin-top:8px')),
+    sk('sk-btn'),
+  );
+
+  if (kind === 'dashboard') {
+    return el(
+      'div',
+      {},
+      head,
+      el('div', { class: 'grid k4' }, Array.from({ length: 4 }, skStat)),
+      sk('', 'height:14px;width:150px;margin:1.3rem 0 .7rem'),
+      el('div', { class: 'grid k4' }, Array.from({ length: 8 }, skStat)),
+      skCard({ rows: 6, cols: 6 }),
+    );
+  }
+  if (kind === 'detail') {
+    return el(
+      'div',
+      {},
+      head,
+      el('div', { class: 'grid k4' }, Array.from({ length: 8 }, skStat)),
+      skCard({ rows: 8, cols: 7 }),
+      skCard({ rows: 4, cols: 7 }),
+    );
+  }
+  if (kind === 'form') {
+    return el(
+      'div',
+      {},
+      head,
+      el(
+        'div',
+        { class: 'sk-card' },
+        ...Array.from({ length: 6 }, () =>
+          el('div', { style: 'margin-bottom:.85rem' }, sk('sk-label'), sk('', 'height:38px;margin-top:6px')),
+        ),
+      ),
+      skCard({ rows: 3, cols: 2 }),
+    );
+  }
+  return el(
+    'div',
+    {},
+    head,
+    el('div', { class: 'searchbar' }, sk('', 'height:38px;flex:1'), sk('', 'height:38px;width:150px')),
+    skCard({ rows: 8, cols: 6 }),
+  );
+}
+
 /** กราฟแท่งเงินเข้า/เงินออกแบบง่าย ไม่พึ่งไลบรารีภายนอก */
 export function barChart(items, { inKey = 'total_in', outKey = 'total_out', labelKey = 'date' } = {}) {
   const max = Math.max(1, ...items.map((i) => Math.max(i[inKey], i[outKey])));

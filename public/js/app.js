@@ -1,5 +1,5 @@
 // ตัวควบคุมหน้าจอหลัก: เข้าสู่ระบบ, เมนู, และการสลับหน้า (SRS ข้อ 4)
-import { api, state, el, clear, toast, toastError, can } from './core.js';
+import { api, state, el, clear, toast, toastError, can, skeleton } from './core.js';
 import { renderDashboard } from './pages/dashboard.js';
 import { renderDebtors, renderDebtorDetail } from './pages/debtors.js';
 import { renderContracts, renderContractDetail, renderNewContract } from './pages/contracts.js';
@@ -15,25 +15,25 @@ const app = document.getElementById('app');
 
 /** เมนูตาม SRS ข้อ 4 — ผูกกับสิทธิ์การใช้งานข้อ 12 */
 const MENU = [
-  { path: '/', icon: '📊', label: 'Dashboard', cap: 'dashboard', render: renderDashboard, tab: true },
-  { path: '/debtors', icon: '👥', label: 'ลูกหนี้', cap: 'debtors_view', render: renderDebtors, tab: true },
-  { path: '/collect', icon: '💵', label: 'รับชำระ', cap: 'payments_create', render: renderCollect, tab: true },
-  { path: '/contracts', icon: '📄', label: 'สัญญา', cap: 'debtors_view', render: renderContracts, tab: true },
-  { path: '/reyod', icon: '🔄', label: 'รียอด', cap: 'reyod', render: renderReyod },
-  { path: '/cashbook', icon: '🧾', label: 'รายรับ-รายจ่าย', cap: 'cashbook', render: renderCashbook },
-  { path: '/reports', icon: '📈', label: 'รายงาน', cap: 'reports_view', render: renderReports },
-  { path: '/employees', icon: '🧑‍💼', label: 'พนักงาน', cap: 'employees_manage', render: renderEmployees },
-  { path: '/import', icon: '📥', label: 'นำเข้าข้อมูล', cap: 'settings_manage', render: renderImport },
-  { path: '/settings', icon: '⚙️', label: 'ตั้งค่า', cap: 'settings_manage', render: renderSettings },
+  { path: '/', label: 'ภาพรวม', cap: 'dashboard', render: renderDashboard, tab: true, skel: 'dashboard' },
+  { path: '/debtors', label: 'ลูกหนี้', cap: 'debtors_view', render: renderDebtors, tab: true },
+  { path: '/collect', label: 'รับชำระ', cap: 'payments_create', render: renderCollect, tab: true, skel: 'detail' },
+  { path: '/contracts', label: 'สัญญา', cap: 'debtors_view', render: renderContracts, tab: true },
+  { path: '/reyod', label: 'รียอด', cap: 'reyod', render: renderReyod },
+  { path: '/cashbook', label: 'รายรับ-รายจ่าย', cap: 'cashbook', render: renderCashbook, skel: 'dashboard' },
+  { path: '/reports', label: 'รายงาน', cap: 'reports_view', render: renderReports, skel: 'dashboard' },
+  { path: '/employees', label: 'พนักงาน', cap: 'employees_manage', render: renderEmployees },
+  { path: '/import', label: 'นำเข้าข้อมูล', cap: 'settings_manage', render: renderImport, skel: 'form' },
+  { path: '/settings', label: 'ตั้งค่า', cap: 'settings_manage', render: renderSettings, skel: 'form' },
 ];
 
 const ROUTES = [
   ...MENU,
-  { path: '/debtors/:id', cap: 'debtors_view', render: renderDebtorDetail },
-  { path: '/contracts/new', cap: 'contracts_create', render: renderNewContract },
-  { path: '/contracts/:id', cap: 'debtors_view', render: renderContractDetail },
-  { path: '/collect/:contractId', cap: 'payments_create', render: renderCollect },
-  { path: '/reyod/:contractId', cap: 'reyod', render: renderReyod },
+  { path: '/debtors/:id', cap: 'debtors_view', render: renderDebtorDetail, skel: 'detail' },
+  { path: '/contracts/new', cap: 'contracts_create', render: renderNewContract, skel: 'form' },
+  { path: '/contracts/:id', cap: 'debtors_view', render: renderContractDetail, skel: 'detail' },
+  { path: '/collect/:contractId', cap: 'payments_create', render: renderCollect, skel: 'detail' },
+  { path: '/reyod/:contractId', cap: 'reyod', render: renderReyod, skel: 'detail' },
 ];
 
 function matchRoute(path) {
@@ -107,12 +107,7 @@ function shell() {
     'nav',
     { class: 'sidenav' },
     visible.map((m) =>
-      el(
-        'a',
-        { href: `#${m.path}`, class: current === m.path ? 'active' : '' },
-        el('span', {}, m.icon),
-        el('span', {}, m.label),
-      ),
+      el('a', { href: `#${m.path}`, class: current === m.path ? 'active' : '' }, m.label),
     ),
   );
 
@@ -123,25 +118,18 @@ function shell() {
     'nav',
     { class: 'tabbar' },
     tabs.map((m) =>
-      el(
-        'a',
-        { href: `#${m.path}`, class: current === m.path ? 'active' : '' },
-        el('span', { class: 'ic' }, m.icon),
-        el('span', {}, m.label),
-      ),
+      el('a', { href: `#${m.path}`, class: current === m.path ? 'active' : '' }, m.label),
     ),
     el(
       'a',
       {
         href: '#',
-        class: 'more',
         onclick: (e) => {
           e.preventDefault();
           openMoreMenu(rest);
         },
       },
-      el('span', { class: 'ic' }, '☰'),
-      el('span', {}, 'เพิ่มเติม'),
+      'เพิ่มเติม',
     ),
   );
 
@@ -154,8 +142,8 @@ function shell() {
     el(
       'div',
       { class: 'who' },
-      el('div', {}, state.user.full_name),
-      el('div', {}, roleLabel(state.user.role)),
+      el('b', {}, state.user.full_name),
+      el('span', {}, roleLabel(state.user.role)),
     ),
     el('button', { onclick: logout }, 'ออก'),
   );
@@ -181,13 +169,13 @@ function openMoreMenu(items) {
               style: 'margin-bottom:.4rem;text-decoration:none',
               onclick: close,
             },
-            `${m.icon}  ${m.label}`,
+            m.label,
           ),
         ),
         el(
           'button',
           { class: 'btn ghost block mt', onclick: () => { close(); openChangePassword(); } },
-          '🔑  เปลี่ยนรหัสผ่าน',
+          'เปลี่ยนรหัสผ่าน',
         ),
       ),
     );
@@ -261,7 +249,7 @@ async function route() {
     return;
   }
 
-  main.append(el('div', { class: 'empty' }, 'กำลังโหลด…'));
+  main.append(skeleton(match.route.skel ?? 'table'));
   try {
     const view = await match.route.render(match.params ?? {});
     clear(main).append(view);
