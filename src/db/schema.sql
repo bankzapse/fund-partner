@@ -244,6 +244,22 @@ CREATE TABLE IF NOT EXISTS counters (
   value BIGINT NOT NULL
 );
 
+-- การจำกัดจำนวนครั้งที่เข้าสู่ระบบผิด (ป้องกันการเดารหัสผ่าน) -------------------
+--
+-- เก็บในฐานข้อมูล ไม่ใช่ในหน่วยความจำ เพราะบน Serverless แต่ละ request
+-- อาจทำงานคนละ instance กัน ตัวนับในหน่วยความจำจึงนับไม่ครบและถูกข้ามได้
+CREATE TABLE IF NOT EXISTS login_attempts (
+  scope        TEXT    NOT NULL,          -- 'user' หรือ 'ip'
+  key          TEXT    NOT NULL,          -- ชื่อผู้ใช้ที่กรอก หรือหมายเลข IP
+  failed_count INTEGER NOT NULL DEFAULT 0,
+  window_start TEXT    NOT NULL,          -- เริ่มนับหน้าต่างเวลานี้เมื่อไร
+  locked_until TEXT,                      -- ล็อกถึงเมื่อไร (ว่าง = ไม่ถูกล็อก)
+  lock_count   INTEGER NOT NULL DEFAULT 0,-- เคยถูกล็อกมาแล้วกี่รอบ (ใช้ถ่วงเวลาเพิ่ม)
+  updated_at   TEXT    NOT NULL,
+  PRIMARY KEY (scope, key)
+);
+CREATE INDEX IF NOT EXISTS idx_login_attempts_locked ON login_attempts(locked_until);
+
 -- คำขออนุมัติ (ข้อ 12) --------------------------------------------------------
 CREATE TABLE IF NOT EXISTS approvals (
   id            INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -272,7 +288,7 @@ BEGIN
   FOREACH t IN ARRAY ARRAY[
     'users','sessions','employees','debtors','debtor_documents','contracts',
     'contract_links','installments','payments','expenses','income_entries',
-    'daily_closings','audit_logs','settings','counters','approvals'
+    'daily_closings','audit_logs','settings','counters','approvals','login_attempts'
   ] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
   END LOOP;

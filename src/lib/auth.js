@@ -3,8 +3,12 @@ import { randomBytes } from 'node:crypto';
 import { get, run, insert, getSettingInt } from '../db/index.js';
 import { nowISO } from './time.js';
 import { audit } from './audit.js';
+import { assertNotLocked, recordFailure, clearFailures, purgeLoginAttempts } from './login-guard.js';
 
 export const COOKIE_NAME = 'fp_session';
+
+// แฮชหลอกสำหรับเผาเวลาเมื่อไม่พบชื่อผู้ใช้ (ไม่มีรหัสผ่านใดตรงกับแฮชนี้)
+const DUMMY_HASH = bcrypt.hashSync('fund-partner-timing-equalizer', 10);
 
 export function hashPassword(plain) {
   if (!plain || String(plain).length < 6) {
@@ -23,13 +27,33 @@ async function expiryFromNow() {
 }
 
 export async function login({ username, password, ip }) {
+  // ต้องตรวจการล็อก "ก่อน" เช็ครหัสผ่าน ไม่งั้นผู้โจมตียังลองรหัสได้ต่อระหว่างถูกล็อก
+  await assertNotLocked({ username, ip });
+
   const user = await get(`SELECT * FROM users WHERE username = :u`, { u: String(username ?? '').trim() });
   if (!user || !verifyPassword(password, user.password_hash)) {
+    if (!user) {
+      // เผาเวลาให้เท่ากับกรณีที่มีผู้ใช้จริง ไม่งั้นผู้โจมตีจับเวลาตอบกลับ
+      // แล้วเดาได้ว่าชื่อผู้ใช้ไหนมีอยู่ในระบบ
+      bcrypt.compareSync(String(password ?? ''), DUMMY_HASH);
+    }
+    const locked = await recordFailure({ username, ip });
+    if (locked.length) {
+      await audit({
+        action: 'login_locked',
+        entity: 'user',
+        entityId: user?.id ?? null,
+        ip,
+        reason: locked.map((l) => `ล็อก ${l.scope === 'user' ? 'ชื่อผู้ใช้' : 'IP'} ${l.key} เป็นเวลา ${l.minutes} นาที`).join(' · '),
+      });
+    }
     throw Object.assign(new Error('ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง'), { status: 401 });
   }
   if (!user.is_active) {
+    // บัญชีถูกปิด ไม่ใช่การเดารหัส จึงไม่นับเป็นความผิด แต่ก็ไม่ล้างตัวนับเดิมทิ้ง
     throw Object.assign(new Error('บัญชีนี้ถูกปิดการใช้งาน'), { status: 403 });
   }
+  await clearFailures({ username, ip });
   const token = randomBytes(32).toString('hex');
   await run(
     `INSERT INTO sessions (token, user_id, created_at, expires_at)
@@ -74,4 +98,5 @@ export function publicUser(user) {
 /** ล้าง session ที่หมดอายุ */
 export async function purgeSessions() {
   await run(`DELETE FROM sessions WHERE expires_at < :now`, { now: new Date().toISOString() });
+  await purgeLoginAttempts();
 }

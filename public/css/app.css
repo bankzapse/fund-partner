@@ -317,6 +317,11 @@ input[type='file'] { padding: 0.45rem; font-size: 0.85rem; }
 .warn { background: var(--amber-soft); border: 1px solid #f2e2c4; color: #74510f; }
 .info { background: var(--navy-50); border: 1px solid #d6e3f0; color: #1d4a75; }
 
+/* การ์ดที่ต้องการให้สังเกตเห็น เช่น บัญชีที่ถูกล็อก — แต้มสีที่ขอบและหัวเรื่องพอ
+   ไม่ย้อมทั้งใบ เพราะตัวเลขในตารางต้องอ่านง่ายเหมือนการ์ดปกติ */
+.card.alert { border-color: #f0dcb8; box-shadow: inset 0.22rem 0 0 var(--amber); }
+.card.alert > h3 { color: #8a5f10; }
+
 /* ---------- กราฟแท่ง ---------- */
 
 .bars { display: flex; align-items: flex-end; gap: 3px; height: 140px; padding-top: 0.5rem; }

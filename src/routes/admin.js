@@ -7,8 +7,39 @@ import { ROLES, MATRIX } from '../lib/permissions.js';
 import { voidPayment } from '../domain/payments.js';
 import { reyod } from '../domain/contracts.js';
 import { wrap, need, intParam } from './_helpers.js';
+import { lockedAccounts, unlockUser } from '../lib/login-guard.js';
 
 const router = Router();
+
+// ---- บัญชีที่ถูกล็อกเพราะเข้าสู่ระบบผิดหลายครั้ง (ข้อ 15) --------------------
+
+router.get(
+  '/locked-accounts',
+  need('employees_manage'),
+  wrap(async (_req, res) => {
+    res.json({ items: await lockedAccounts() });
+  }),
+);
+
+router.post(
+  '/locked-accounts/unlock',
+  need('employees_manage'),
+  wrap(async (req, res) => {
+    const username = String(req.body?.username ?? '').trim();
+    if (!username) return res.status(400).json({ error: 'กรุณาระบุชื่อผู้ใช้' });
+    const found = await unlockUser(username);
+    if (found) {
+      await audit({
+        userId: req.ctx.user.id,
+        action: 'unlock',
+        entity: 'user',
+        ip: req.ctx.ip,
+        reason: `ปลดล็อกการเข้าสู่ระบบของ ${username}`,
+      });
+    }
+    res.json({ ok: true, found });
+  }),
+);
 
 // ---- ผู้ใช้งานและพนักงาน (ข้อ 12) -------------------------------------------
 

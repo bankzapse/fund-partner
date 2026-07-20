@@ -10,12 +10,14 @@ export async function renderEmployees() {
   const body = el('div', {});
 
   async function load() {
-    const [users, employees] = await Promise.all([
+    const [users, employees, locked] = await Promise.all([
       api.get('/api/admin/users'),
       api.get('/api/admin/employees'),
+      api.get('/api/admin/locked-accounts'),
     ]);
 
     clear(body).append(
+      lockedCard(locked.items, load),
       el(
         'div',
         { class: 'card' },
@@ -85,6 +87,50 @@ export async function renderEmployees() {
   );
   await load();
   return wrap;
+}
+
+/**
+ * บัญชีที่ถูกล็อกเพราะเข้าสู่ระบบผิดหลายครั้ง
+ * แสดงเฉพาะตอนที่มีคนถูกล็อกจริง จะได้ไม่รกหน้าจอในวันปกติ
+ * ระบบปลดล็อกเองเมื่อครบเวลา ปุ่มนี้ไว้ใช้ตอนพนักงานต้องเข้าใช้งานเดี๋ยวนั้น
+ */
+function lockedCard(items, onDone) {
+  // คืน fragment ว่าง ไม่ใช่ null เพราะ append(null) ของ DOM จะกลายเป็นข้อความ "null" บนหน้าจอ
+  if (!items?.length) return document.createDocumentFragment();
+  return el(
+    'div',
+    { class: 'card alert' },
+    el('h3', {}, 'บัญชีที่ถูกล็อกชั่วคราว'),
+    el('div', { class: 'hint' },
+      'บัญชีเหล่านี้กรอกรหัสผ่านผิดหลายครั้งติดกัน ระบบจึงล็อกไว้กันคนเดารหัสผ่าน ' +
+      'ถ้าไม่ใช่พนักงานของเราเอง แปลว่ามีคนพยายามเข้าระบบ ควรเปลี่ยนรหัสผ่านบัญชีนั้น'),
+    table(
+      ['ชื่อผู้ใช้', 'ปลดล็อกอัตโนมัติเมื่อ', 'ถูกล็อกมาแล้ว', ''],
+      items.map((a) =>
+        el(
+          'tr',
+          {},
+          el('td', { class: 'small mono' }, a.username),
+          el('td', { class: 'small' }, new Date(a.locked_until).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' })),
+          el('td', { class: 'small' }, `${a.lock_count} ครั้ง`),
+          el('td', {}, el('button', {
+            class: 'btn ghost sm',
+            onclick: async (e) => {
+              e.target.disabled = true;
+              try {
+                await api.post('/api/admin/locked-accounts/unlock', { username: a.username });
+                toast(`ปลดล็อก ${a.username} แล้ว`, 'ok');
+                onDone();
+              } catch (err) {
+                toastError(err);
+                e.target.disabled = false;
+              }
+            },
+          }, 'ปลดล็อกเดี๋ยวนี้')),
+        ),
+      ),
+    ),
+  );
 }
 
 /** ตารางสิทธิ์อ้างอิงตาม SRS ข้อ 12 */

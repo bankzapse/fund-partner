@@ -14,14 +14,17 @@ async function request(method, url, body) {
     headers: body ? { 'Content-Type': 'application/json' } : {},
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (res.status === 401) {
+  // 401 จากหน้าอื่นแปลว่า session หมดอายุ ให้เด้งกลับไปเข้าสู่ระบบ
+  // แต่ 401 จากการ "เข้าสู่ระบบ" เองแปลว่ารหัสผ่านผิด ต้องปล่อยข้อความจริงผ่านไป
+  const isLoginRequest = url === '/api/auth/login';
+  if (res.status === 401 && !isLoginRequest) {
     state.user = null;
     location.hash = '#/login';
-    throw new Error('กรุณาเข้าสู่ระบบอีกครั้ง');
+    throw Object.assign(new Error('กรุณาเข้าสู่ระบบอีกครั้ง'), { status: 401 });
   }
   const text = await res.text();
   const data = text ? JSON.parse(text) : {};
-  if (!res.ok) throw new Error(data.error || 'เกิดข้อผิดพลาด');
+  if (!res.ok) throw Object.assign(new Error(data.error || 'เกิดข้อผิดพลาด'), { status: res.status });
   return data;
 }
 

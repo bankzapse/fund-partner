@@ -5,3 +5,4 @@ backups/
 *.log
 .DS_Store
 setup-report.txt
+reports/

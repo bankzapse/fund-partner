@@ -106,6 +106,8 @@ export async function createApp() {
   app.use((err, _req, res, _next) => {
     const status = err.status ?? 500;
     if (status >= 500) console.error(err);
+    // บอกให้ผู้เรียกรู้ว่าต้องรอนานแค่ไหน (ใช้ตอนถูกล็อกเพราะเข้าสู่ระบบผิดหลายครั้ง)
+    if (err.retryAfterSeconds > 0) res.setHeader('Retry-After', String(err.retryAfterSeconds));
     res.status(status).json({ error: err.message || 'เกิดข้อผิดพลาดภายในระบบ' });
   });
 

@@ -61,6 +61,9 @@ function renderLogin() {
   const username = el('input', { autocomplete: 'username', placeholder: 'ชื่อผู้ใช้' });
   const password = el('input', { type: 'password', autocomplete: 'current-password', placeholder: 'รหัสผ่าน' });
   const button = el('button', { class: 'btn block', type: 'submit' }, 'เข้าสู่ระบบ');
+  // ข้อความแจ้งเตือนแบบค้างไว้ ไม่ใช้ toast ที่หายไปเอง เพราะกรณีถูกล็อก
+  // ผู้ใช้ต้องอ่านได้ว่าต้องรออีกกี่นาที
+  const notice = el('div', { class: 'warn', style: 'display:none' });
 
   const form = el(
     'form',
@@ -69,6 +72,7 @@ function renderLogin() {
       onsubmit: async (e) => {
         e.preventDefault();
         button.disabled = true;
+        notice.style.display = 'none';
         try {
           const data = await api.post('/api/auth/login', {
             username: username.value,
@@ -79,13 +83,20 @@ function renderLogin() {
           location.hash = '#/';
           await boot();
         } catch (err) {
-          toastError(err);
+          if (err.status === 429) {
+            notice.textContent = err.message;
+            notice.style.display = '';
+            password.value = '';
+          } else {
+            toastError(err);
+          }
           button.disabled = false;
         }
       },
     },
     el('h1', {}, 'พันธมิตรเงินทุน'),
     el('p', { class: 'sub' }, 'ระบบบริหารลูกหนี้ สัญญา และรับชำระ'),
+    notice,
     el('div', { class: 'field' }, el('label', {}, 'ชื่อผู้ใช้'), username),
     el('div', { class: 'field' }, el('label', {}, 'รหัสผ่าน'), password),
     button,
