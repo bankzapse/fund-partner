@@ -269,8 +269,8 @@ check() {
   else warn "$label ได้ $code (คาดว่า $expect)"; RESULTS+=("FAIL  $label ได้ $code คาดว่า $expect")
        head -c 200 /tmp/fp-check.json 2>/dev/null | sed 's/^/    /'; echo; fi
 }
-check /welcome          200 "หน้าแนะนำระบบ (SEO)"
-check /                 200 "หน้าเข้าสู่ระบบ"
+check /                 200 "หน้าแรก (SEO)"
+check /app              200 "หน้าเข้าสู่ระบบ"
 check /robots.txt       200 "robots.txt"
 check /api/auth/session 200 "API เชื่อมฐานข้อมูล"
 
@@ -308,7 +308,7 @@ printf '────────────────────────
 
 FAILED=$(printf '%s\n' "${RESULTS[@]}" | grep -c '^FAIL' || true)
 if [ "$FAILED" = "0" ]; then
-  printf '  \033[32mเสร็จสมบูรณ์\033[0m — เข้าใช้งานที่ %s\n' "$PROD_URL"
+  printf '  \033[32mเสร็จสมบูรณ์\033[0m — เข้าใช้งานที่ %s/app\n' "$PROD_URL"
   printf '  เข้าสู่ระบบด้วย owner และรหัสผ่านที่คุณตั้งไว้\n\n'
 else
   printf '  \033[33mมี %s รายการที่ไม่ผ่าน\033[0m — ส่งไฟล์ %s ให้ผู้ดูแลดูได้เลย\n\n' "$FAILED" "$REPORT"

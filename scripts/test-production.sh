@@ -13,7 +13,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-BASE="${FP_BASE_URL:-https://fund-partner.vercel.app}"
+BASE="${FP_BASE_URL:-https://fund-partner.vercel.app}"   # ตัวระบบอยู่ที่ $BASE/app
 JAR="$(mktemp)"
 PASS=0; FAIL=0
 declare -a NOTES

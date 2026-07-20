@@ -163,7 +163,7 @@ ok "deploy แล้ว: $URL"
 say "ตรวจสอบระบบ"
 sleep 5
 PROD="https://fund-partner.vercel.app"
-for path in /welcome /api/auth/session; do
+for path in / /app /api/auth/session; do
   code=$(curl -s -o /tmp/fp-check.json -w '%{http_code}' "$PROD$path")
   if [ "$code" = "200" ]; then ok "$path → $code"
   else warn "$path → $code : $(head -c 160 /tmp/fp-check.json)"; fi
@@ -172,7 +172,7 @@ done
 cat <<MSG
 
 ────────────────────────────────────────────────────────────
-  เสร็จแล้ว — เข้าใช้งานที่ $PROD
+  เสร็จแล้ว — เข้าใช้งานที่ $PROD/app
 
   ⚠  สิ่งที่ต้องทำทันที
      เข้าสู่ระบบด้วย owner / owner1234 แล้ว "เปลี่ยนรหัสผ่านทั้ง 4 บัญชี"
