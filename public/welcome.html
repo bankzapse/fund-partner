@@ -304,6 +304,46 @@ footer a:hover{color:var(--navy)}
 .cookie .acts{display:flex;gap:.5rem;flex-wrap:wrap}
 .skip{position:absolute;left:-9999px}
 .skip:focus{left:.5rem;top:.5rem;background:#fff;padding:.5rem 1rem;z-index:100;border-radius:8px}
+
+/* ---------- รูปภาพประกอบ ---------- */
+figure { margin: 0; }
+.shot {
+  position: relative; border-radius: var(--radius); overflow: hidden;
+  box-shadow: var(--shadow); background: var(--navy-50);
+}
+.shot img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.shot.tall { aspect-ratio: 4 / 3; }
+/* ไล่เฉดสีแบรนด์ทับรูปบาง ๆ ให้ภาพกลมกลืนกับหน้าเว็บ */
+.shot::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(160deg, rgba(15,47,79,.28), rgba(15,47,79,.04) 55%, rgba(217,155,43,.13));
+}
+.shot .cap {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 1;
+  padding: 1.6rem 1.1rem .9rem; color: #fff; font-size: .88rem; font-weight: 600;
+  background: linear-gradient(transparent, rgba(8,22,38,.85));
+}
+
+.split { display: grid; gap: 1.6rem; align-items: center; }
+@media (min-width: 860px) { .split { grid-template-columns: 1fr 1fr; gap: 2.6rem; } }
+@media (min-width: 860px) { .split.flip > figure { order: 2; } }
+
+/* แถบสร้างความน่าเชื่อถือ */
+.trust-band {
+  position: relative; border-radius: 22px; overflow: hidden;
+  min-height: 300px; display: grid; align-items: center;
+}
+.trust-band > img {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; z-index: 0;
+}
+.trust-band .veil {
+  position: absolute; inset: 0; z-index: 1;
+  background: linear-gradient(100deg, rgba(10,31,54,.95) 0%, rgba(15,47,79,.88) 45%, rgba(15,47,79,.55) 100%);
+}
+.trust-band .inner { position: relative; z-index: 2; padding: 2.6rem 1.6rem; max-width: 42rem; }
+.trust-band h2 { color: #fff; }
+.trust-band p { color: #d7e5f2; margin-bottom: 0; }
 </style>
 </head>
 <body>
@@ -396,6 +436,34 @@ footer a:hover{color:var(--navy)}
           ระบบแสดงเงินต้นคงเหลือและดอกค้างแยกกันชัดเจน
         </p>
       </article>
+    </div>
+  </div>
+</section>
+
+<!-- ============ ใช้งานจริงหน้าร้าน ============ -->
+<section class="alt">
+  <div class="wrap split">
+    <figure class="shot tall">
+      <img src="/img/shop.webp" width="1000" height="667" loading="lazy" decoding="async"
+           alt="เจ้าของร้านกำลังใช้ระบบรับชำระผ่านหน้าจอที่หน้าร้าน" />
+      <figcaption class="cap">เปิดใช้ได้ทันทีทั้งหน้าร้านและระหว่างออกสายเก็บเงิน</figcaption>
+    </figure>
+    <div>
+      <h2>ออกแบบจากงานเก็บเงินจริง</h2>
+      <p class="lead">
+        พนักงานเก็บเงินเปิดจากมือถือ กดปุ่มเดียวเห็นยอดที่ต้องเก็บวันนี้
+        รับเงินแล้วระบบตัดต้น-ดอกให้ทันที ไม่ต้องคิดในหัว ไม่ต้องกลับมาคีย์ซ้ำที่ร้าน
+      </p>
+      <div class="grid c2" style="margin-top:1.2rem">
+        <article class="card">
+          <h3>📱 ปุ่มใหญ่ กดง่าย</h3>
+          <p>จ่ายเต็ม / เฉพาะดอก / กรอกเอง / ไม่จ่าย — สี่ปุ่มจบ</p>
+        </article>
+        <article class="card">
+          <h3>🧾 ออกใบรับเงินทันที</h3>
+          <p>พิมพ์หรือถ่ายภาพส่งให้ลูกค้าได้เลยหลังกดบันทึก</p>
+        </article>
+      </div>
     </div>
   </div>
 </section>
@@ -501,9 +569,19 @@ footer a:hover{color:var(--navy)}
 <!-- ============ เปรียบเทียบ ============ -->
 <section id="compare" class="alt">
   <div class="wrap">
-    <div class="center" style="max-width:42rem;margin:0 auto 2rem">
-      <h2>เทียบกับวิธีเดิม</h2>
-      <p class="lead">สิ่งที่เปลี่ยนไปเมื่อย้ายจากสมุดจดและ Excel มาอยู่บนระบบ</p>
+    <div class="split flip" style="margin-bottom:2.2rem">
+      <figure class="shot tall">
+        <img src="/img/paperwork.webp" width="800" height="534" loading="lazy" decoding="async"
+             alt="การจดบัญชีลูกหนี้ด้วยกระดาษและสเปรดชีตแบบเดิม" />
+        <figcaption class="cap">วิธีเดิม: คิดดอกเอง ไล่เปิดหาเอง เสี่ยงข้อมูลหาย</figcaption>
+      </figure>
+      <div>
+        <h2>เทียบกับวิธีเดิม</h2>
+        <p class="lead">
+          สิ่งที่เปลี่ยนไปเมื่อย้ายจากสมุดจดและ Excel มาอยู่บนระบบ —
+          ไม่ใช่แค่สะดวกขึ้น แต่ตัวเลขถูกต้องขึ้นและตรวจย้อนหลังได้ทุกบาท
+        </p>
+      </div>
     </div>
     <div class="tbl-wrap">
       <table>
@@ -618,6 +696,25 @@ footer a:hover{color:var(--navy)}
   </div>
 </section>
 
+<!-- ============ แถบความน่าเชื่อถือ ============ -->
+<section class="alt">
+  <div class="wrap">
+    <div class="trust-band">
+      <img src="/img/partner.webp" width="1000" height="668" loading="lazy" decoding="async"
+           alt="การจับมือแสดงถึงความเป็นพันธมิตรทางธุรกิจ" />
+      <div class="veil"></div>
+      <div class="inner">
+        <h2>ตรวจย้อนหลังได้ทุกบาท</h2>
+        <p>
+          รายการการเงินไม่ถูกลบถาวร ใช้การยกเลิกพร้อมเหตุผลและชื่อผู้ทำรายการ
+          ทุกการสร้าง แก้ไข และอนุมัติถูกบันทึกไว้ทั้งค่าเดิมและค่าใหม่
+          เจ้าของตรวจสอบได้ตลอดเวลาว่าใครทำอะไรเมื่อไร
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ============ FINAL CTA ============ -->
 <section>
   <div class="wrap">
@@ -658,6 +755,10 @@ footer a:hover{color:var(--navy)}
         </ul>
       </div>
     </div>
+    <p class="legal" style="font-size:.78rem">
+      ภาพประกอบจาก Unsplash (ใช้งานได้ฟรีรวมถึงเชิงพาณิชย์) จัดเก็บไว้บนเซิร์ฟเวอร์ของเราเอง
+      จึงไม่มีการส่งข้อมูลผู้เข้าชมไปยังบุคคลที่สาม
+    </p>
     <p class="legal">
       © 2026 พันธมิตรเงินทุน · เครื่องมือบันทึกและคำนวณบัญชีลูกหนี้สำหรับกิจการ ไม่ใช่บริการปล่อยกู้
       และไม่ใช่คำแนะนำทางกฎหมาย บัญชี หรือภาษี
