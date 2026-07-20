@@ -146,12 +146,13 @@ async function exec(sql, params) {
 
 export async function all(sql, params = {}) {
   const res = await exec(sql, params);
-  return res.rows.map(normalizeRow);
+  return normalizeRows(res.rows, res.fields);
 }
 
 export async function get(sql, params = {}) {
   const res = await exec(sql, params);
-  return res.rows.length ? normalizeRow(res.rows[0]) : null;
+  const rows = normalizeRows(res.rows, res.fields);
+  return rows.length ? rows[0] : null;
 }
 
 export async function run(sql, params = {}) {
@@ -165,45 +166,54 @@ export async function insert(sql, params = {}) {
   return Number(res.rows[0].id);
 }
 
-/** คอลัมน์ที่เป็น BIGINT/ตัวเลข ต้องแปลงกลับเป็น number เสมอ */
-const NUMERIC_COLUMNS = new Set([
-  'id', 'n', 'value', 'count', 'seq', 'num_installments',
-  'principal_amount', 'installment_amount', 'interest_per_inst', 'doc_fee',
-  'first_inst_deducted', 'cash_disbursed', 'principal_remaining',
-  'due_amount', 'interest_due', 'principal_due', 'interest_paid', 'principal_paid',
-  'amount_paid', 'interest_amount', 'amount', 'carried_principal', 'new_money',
-  'system_cash', 'actual_cash', 'difference', 'total_in', 'total_out',
-  'real_income', 'net_profit', 'principal_back', 'expected', 'collected',
-  'outstanding', 'due_count', 'overdue_count', 'arrears_amount', 'due_remaining',
-  'debtor_count', 'expenses', 'commission', 'interest_collected',
-  'contract_count', 'payment_count', 'full_count', 'interest_only_count',
-  'partial_count', 'cash_from_debtors', 'interest_income', 'doc_fee_income',
-  'other_income', 'capital_in', 'capital_out', 'total_income_entries',
-  'disbursed', 'operating_expense', 'total_expense', 'principal_issued',
-  'principal_outstanding', 'active_contracts', 'contract_id', 'debtor_id',
-  'employee_id', 'user_id', 'created_by', 'received_by', 'voided_by',
-  'from_contract_id', 'to_contract_id', 'supervisor_id', 'is_void', 'is_active',
-  'overdue_installments', 'new_principal', 'approved_by', 'paid_by',
-  'uploaded_by', 'decided_by', 'requested_by', 'active_contracts', 'contract_count',
-]);
+/**
+ * ชนิดคอลัมน์ของ PostgreSQL ที่ไดรเวอร์ส่งกลับมาเป็น string
+ *   20   = int8 (BIGINT)  — คอลัมน์เงินทั้งหมดและผลลัพธ์ COUNT()
+ *   1700 = numeric        — ผลลัพธ์ SUM() ของ BIGINT
+ * แปลงตาม "ชนิดจริงที่ฐานข้อมูลบอกมา" ไม่ใช่เดาจากชื่อคอลัมน์
+ * เพราะการเดาจากชื่อจะพลาดทันทีที่มี alias ใหม่ แล้วตัวเลขเงินจะกลายเป็น
+ * สตริงเงียบ ๆ ทำให้การบวกกลายเป็นการต่อข้อความ
+ */
+const STRING_NUMERIC_TYPES = new Set([20, 1700]);
 
 /**
- * PostgreSQL คืนค่า BIGINT เป็น string เพื่อกันการสูญเสียความแม่นยำ
- * ระบบนี้เก็บเงินเป็นสตางค์ซึ่งอยู่ในช่วงที่ Number รองรับได้ปลอดภัย
- * จึงแปลงกลับเป็น number ให้ตรรกะการคำนวณทั้งหมดทำงานเหมือนเดิม
+ * แปลงค่าที่เป็นตัวเลขให้เป็น number ตามชนิดคอลัมน์จริง
+ * ถ้าจำนวนใหญ่เกินกว่าที่ JavaScript เก็บได้แม่นยำ จะโยน error ทันที
+ * เพราะการปัดเศษเงียบ ๆ ในระบบการเงินอันตรายกว่าการหยุดทำงาน
  */
-function normalizeRow(row) {
-  const out = {};
-  for (const [key, value] of Object.entries(row)) {
-    if (typeof value === 'bigint') {
-      out[key] = Number(value);
-    } else if (typeof value === 'string' && NUMERIC_COLUMNS.has(key) && /^-?\d+$/.test(value)) {
-      out[key] = Number(value);
-    } else {
-      out[key] = value;
-    }
+function normalizeRows(rows, fields) {
+  if (!rows.length) return rows;
+
+  const numericCols = [];
+  for (const f of fields ?? []) {
+    if (STRING_NUMERIC_TYPES.has(f.dataTypeID)) numericCols.push(f.name);
   }
-  return out;
+  if (!numericCols.length) return rows.map((r) => ({ ...r }));
+
+  return rows.map((row) => {
+    const out = { ...row };
+    for (const col of numericCols) {
+      const v = out[col];
+      if (v === null || v === undefined) continue;
+      if (typeof v === 'number') continue;
+      if (typeof v === 'bigint') {
+        if (v > BigInt(Number.MAX_SAFE_INTEGER) || v < BigInt(Number.MIN_SAFE_INTEGER)) {
+          throw new Error(`ค่า ${col} ใหญ่เกินกว่าที่ระบบจะคำนวณได้แม่นยำ: ${v}`);
+        }
+        out[col] = Number(v);
+        continue;
+      }
+      if (typeof v === 'string') {
+        if (!/^-?\d+$/.test(v)) continue; // เช่น numeric ที่มีทศนิยม ปล่อยไว้ตามเดิม
+        const n = Number(v);
+        if (!Number.isSafeInteger(n)) {
+          throw new Error(`ค่า ${col} ใหญ่เกินกว่าที่ระบบจะคำนวณได้แม่นยำ: ${v}`);
+        }
+        out[col] = n;
+      }
+    }
+    return out;
+  });
 }
 
 /**

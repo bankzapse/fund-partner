@@ -21,13 +21,22 @@ export async function ownEmployeeId(user) {
   return row?.id ?? -1; // -1 = ไม่ผูกกับพนักงานคนใด จึงไม่เห็นข้อมูลใคร
 }
 
-/** คืนค่า employee_id ที่ต้องใช้กรอง หรือ null ถ้าเห็นได้ทั้งหมด */
-export async function scopeEmployeeId(user, capability = 'debtors_view') {
-  return scopedToOwn(user, capability) ? await ownEmployeeId(user) : null;
+/**
+ * คืนค่า employee_id ที่ต้องใช้กรอง หรือ null ถ้าเห็นข้อมูลได้ทั้งหมด
+ *
+ * ขอบเขตการมองเห็นข้อมูลยึดจาก debtors_view เสมอ และเข้มขึ้นได้ตามความสามารถที่ระบุ
+ * แยกจาก "สิทธิ์ทำรายการ" โดยเด็ดขาด เพราะพนักงานเก็บเงินมีสิทธิ์ "รับชำระ" เต็ม
+ * แต่ต้องทำได้เฉพาะกับลูกหนี้ที่ตนดูแลเท่านั้น (SRS ข้อ 12)
+ * ถ้าเอาสิทธิ์ทำรายการมาตัดสินขอบเขต จะกลายเป็นเห็นและแตะข้อมูลของคนอื่นได้
+ */
+export async function scopeEmployeeId(user, capability = null) {
+  const restricted =
+    scopedToOwn(user, 'debtors_view') || (capability ? scopedToOwn(user, capability) : false);
+  return restricted ? await ownEmployeeId(user) : null;
 }
 
 /** ตรวจว่าผู้ใช้มีสิทธิ์เข้าถึงลูกหนี้รายนี้ */
-export async function assertDebtorAccess(user, debtorId, capability = 'debtors_view') {
+export async function assertDebtorAccess(user, debtorId, capability = null) {
   const scope = await scopeEmployeeId(user, capability);
   if (scope === null) return;
   const row = await get(`SELECT employee_id FROM debtors WHERE id = :id`, { id: debtorId });
