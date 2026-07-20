@@ -299,6 +299,25 @@ export async function voidPayment({ paymentId, reason }, ctx) {
       throw new PaymentError('รายการอยู่ในวันที่ปิดยอดแล้ว ต้องให้เจ้าของเป็นผู้ยกเลิก');
     }
 
+    // ถ้าสัญญานี้ถูกรียอดไปแล้ว การย้อนยอดจะทำให้เงินต้นไปค้างบนสัญญาที่ปิดแล้ว
+    // ซึ่งรายงานไม่นับรวม เท่ากับเงินหายจากบัญชีโดยไม่มีสัญญาณเตือน
+    // ปฏิเสธไว้ก่อนดีกว่าปล่อยให้ตัวเลขผิดเงียบ ๆ
+    const reyodLink = await get(
+      `SELECT l.to_contract_id, c.contract_no AS new_no, f.contract_no AS old_no
+       FROM contract_links l
+       JOIN contracts c ON c.id = l.to_contract_id
+       JOIN contracts f ON f.id = l.from_contract_id
+       WHERE l.from_contract_id = :cid`,
+      { cid: payment.contract_id },
+    );
+    if (reyodLink) {
+      throw new PaymentError(
+        `ยกเลิกไม่ได้ เพราะสัญญา ${reyodLink.old_no} ถูกรียอดไปเป็น ${reyodLink.new_no} แล้ว ` +
+          'ยอดที่ยกไปคำนวณจากรายการนี้ด้วย การย้อนยอดจะทำให้เงินต้นค้างบนสัญญาที่ปิดแล้ว ' +
+          'และหายจากรายงาน — ให้บันทึกรายการปรับปรุงในสัญญาใหม่แทน',
+      );
+    }
+
     const allocations = JSON.parse(payment.allocations || '[]');
     await applyAllocations(allocations, -1);
     await updatePrincipal(payment.contract_id, +payment.principal_amount);
