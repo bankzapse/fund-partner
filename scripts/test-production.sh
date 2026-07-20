@@ -117,23 +117,13 @@ PAYID=$(jget payment.id)
 REMAIN=$(jget summary.principal_remaining)
 eq "$REMAIN" "94000" "เงินต้นคงเหลือหลังรับชำระ 2 งวด"
 
+# อีกใบไว้ทดสอบว่าหลังรียอดแล้วยกเลิกไม่ได้
+call POST /api/payments "{\"contract_id\":$CID,\"amount_paid\":5000}" >/dev/null
+PAYID2=$(jget payment.id)
+
 # ยอดติดลบต้องถูกปฏิเสธ (SRS ข้อ 14)
 call POST /api/payments "{\"contract_id\":$CID,\"amount_paid\":-5000}" >/dev/null
 [ "$CODE" -ge 400 ] && ok "ยอดติดลบถูกปฏิเสธ (HTTP $CODE)" || bad "ยอดติดลบผ่านได้! (HTTP $CODE)"
-
-# --------------------------------------------------------------------- รียอด
-say "รียอด (SRS ข้อ 9)"
-call POST /api/contracts/reyod "{\"from_contract_id\":$CID,\"new_money\":50000}" >/dev/null
-if [ "$CODE" = "201" ]; then
-  NEWNO=$(jget new_contract.contract_no)
-  NEWP=$(jget new_contract.principal_amount)
-  OLDST=$(jget old_contract.status)
-  CARRIED=$(jget carried_principal)
-  ok "สร้างสัญญาใหม่ $NEWNO"
-  eq "$NEWP" "$((CARRIED + 50000))" "ยอดสัญญาใหม่ = คงเหลือเดิม + เงินเพิ่มใหม่"
-  [ "$OLDST" = "closed_reyod" ] && ok "สัญญาเดิมปิดด้วยการรียอด (ไม่ลบข้อมูล)" || bad "สถานะสัญญาเดิม=$OLDST"
-  NEWCID=$(jget new_contract.id)
-else bad "รียอดไม่สำเร็จ (HTTP $CODE)"; NEWCID=""; fi
 
 # --------------------------------------------------------- ยกเลิกรายการรับเงิน
 say "ยกเลิกรายการรับเงิน (SRS ข้อ 14/15)"
@@ -147,6 +137,26 @@ if [ "$CODE" = "200" ]; then
   call POST "/api/payments/$PAYID/void" '{"reason":"ซ้ำ"}' >/dev/null
   [ "$CODE" -ge 400 ] && ok "ยกเลิกซ้ำถูกปฏิเสธ (กันยอดเด้งกลับสองรอบ)" || bad "ยกเลิกซ้ำได้!"
 else bad "ยกเลิกไม่สำเร็จ (HTTP $CODE)"; fi
+
+# --------------------------------------------------------------------- รียอด
+say "รียอด (SRS ข้อ 9)"
+call POST /api/contracts/reyod "{\"from_contract_id\":$CID,\"new_money\":50000}" >/dev/null
+if [ "$CODE" = "201" ]; then
+  NEWNO=$(jget new_contract.contract_no)
+  NEWP=$(jget new_contract.principal_amount)
+  OLDST=$(jget old_contract.status)
+  CARRIED=$(jget carried_principal)
+  ok "สร้างสัญญาใหม่ $NEWNO"
+  eq "$NEWP" "$((CARRIED + 50000))" "ยอดสัญญาใหม่ = คงเหลือเดิม + เงินเพิ่มใหม่"
+  [ "$OLDST" = "closed_reyod" ] && ok "สัญญาเดิมปิดด้วยการรียอด (ไม่ลบข้อมูล)" || bad "สถานะสัญญาเดิม=$OLDST"
+  NEWCID=$(jget new_contract.id)
+
+  # หลังรียอดแล้ว การยกเลิกรายการเดิมต้องถูกปฏิเสธ
+  # ไม่งั้นเงินต้นจะเด้งกลับไปค้างบนสัญญาที่ปิดแล้วและหายจากรายงาน
+  call POST "/api/payments/$PAYID2/void" '"'"'{"reason":"ลองหลังรียอด"}'"'"' >/dev/null
+  [ "$CODE" -ge 400 ] && ok "ยกเลิกรายการหลังรียอดถูกปฏิเสธ (กันเงินหายจากรายงาน)" \
+    || bad "ยกเลิกหลังรียอดได้! เงินต้นจะหายจากรายงาน"
+else bad "รียอดไม่สำเร็จ (HTTP $CODE)"; NEWCID=""; fi
 
 # ------------------------------------------------------------------- รายงาน
 say "รายงานและกฎบัญชี (SRS ข้อ 11 และเกณฑ์ข้อ 18)"
