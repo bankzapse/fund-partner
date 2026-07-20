@@ -99,8 +99,19 @@ export async function createApp() {
     res.sendFile(join(PUBLIC_DIR, 'app.html'));
   });
 
-  // เส้นทางอื่นที่ไม่รู้จัก ส่งกลับหน้าแรก
-  app.get(/^(?!\/api\/).*/, (_req, res) => res.redirect(302, '/'));
+  // เส้นทางอื่นที่ไม่รู้จัก
+  //
+  // แยกสองกรณี เพราะปลายทางต่างกันโดยสิ้นเชิง:
+  //   - คนพิมพ์ URL ผิด เช่น /login → พาไปหน้าแรก ดีกว่าโชว์หน้า 404 ดิบ ๆ
+  //   - ไฟล์ที่หายไป เช่น /js/typo.js → ต้องตอบ 404 ตรง ๆ
+  //     ถ้า redirect ไปหน้าแรก เบราว์เซอร์จะได้ HTML มาแทนไฟล์ JS
+  //     แล้วขึ้น error แปลก ๆ ที่ตามหาต้นตอยาก
+  app.get(/^(?!\/api\/).*/, (req, res) => {
+    if (/\.[a-z0-9]{1,8}$/i.test(req.path)) {
+      return res.status(404).type('text/plain; charset=utf-8').send('ไม่พบไฟล์ที่ร้องขอ');
+    }
+    res.redirect(302, '/');
+  });
 
   // ตัวจัดการข้อผิดพลาดกลาง — ส่งข้อความภาษาไทยกลับให้ผู้ใช้
   app.use((err, _req, res, _next) => {
