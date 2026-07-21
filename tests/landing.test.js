@@ -12,7 +12,7 @@ import { createApp } from '../src/server.js';
 import { run, closeDb, setSetting } from '../src/db/index.js';
 import { hashPassword } from '../src/lib/auth.js';
 import { nowISO } from '../src/lib/time.js';
-import { renderPricing, escapeHtml } from '../src/lib/landing.js';
+import { renderPricing, escapeHtml, offersJson } from '../src/lib/landing.js';
 
 let server, base, ownerCookie;
 
@@ -51,7 +51,7 @@ describe('ราคาบนหน้าแนะนำระบบ', () => {
     // ถ้าราคาถูกเติมด้วย JavaScript ทีหลัง Google อาจเก็บหน้าที่ยังไม่มีราคา
     const { status, html } = await get('/');
     assert.equal(status, 200);
-    assert.match(html, /฿790/, 'ต้องเห็นราคาในเนื้อ HTML ตั้งแต่แรก');
+    assert.match(html, /฿990/, 'ต้องเห็นราคาในเนื้อ HTML ตั้งแต่แรก');
     assert.match(html, /id="pricing"/);
     assert.match(html, /มาตรฐาน/);
   });
@@ -75,7 +75,7 @@ describe('ราคาบนหน้าแนะนำระบบ', () => {
     assert.match(html, /฿1,500/, 'ราคาใหม่ต้องขึ้น');
     assert.match(html, /ค่าบริการรายเดือน/, 'หัวข้อใหม่ต้องขึ้น');
     assert.match(html, /สนใจแพ็กเกจนี้/, 'ข้อความบนปุ่มต้องเปลี่ยนตาม');
-    assert.doesNotMatch(html, /฿790/, 'ราคาเดิมต้องหายไป ไม่ค้างอยู่');
+    assert.doesNotMatch(html, /฿990/, 'ราคาเดิมต้องหายไป ไม่ค้างอยู่');
   });
 
   test('ไม่มีแพ็กเกจเลย = ซ่อนทั้งส่วนราคาและลิงก์ในเมนู', async () => {
@@ -106,6 +106,21 @@ describe('ราคาบนหน้าแนะนำระบบ', () => {
     assert.doesNotMatch(html, /<img[^>]*onerror/i, 'ต้องไม่มีแท็กที่มี event handler ทำงานได้');
     assert.match(html, /&lt;script&gt;/, 'ต้องแสดงเป็นข้อความธรรมดาแทน');
     assert.match(html, /&quot;&gt;&lt;img/, 'อักขระอันตรายต้องถูกแปลงเป็นข้อความ');
+  });
+
+  test('ราคาที่ส่งให้ Google ต้องตรงกับราคาบนหน้าเว็บ', async () => {
+    // ถ้าฝังช่วงราคาไว้ตายตัว พอผู้ดูแลแก้ราคาแล้ว Google จะโชว์ราคาเก่า
+    // ในหน้าผลค้นหา ซึ่งไม่ตรงกับที่ลูกค้าเห็นจริงเมื่อกดเข้ามา
+    await setSetting('pricing_plans', JSON.stringify([
+      { name: 'ฟรี', price: '฿0', per: '/ 14 วัน', features: [] },
+      { name: 'กลาง', price: '฿990', per: '/ เดือน', features: [] },
+      { name: 'สูง', price: '฿1,590', per: '/ เดือน', features: [] },
+    ]));
+    const { html } = await get('/');
+    assert.match(html, /"lowPrice":\s*"0"/);
+    assert.match(html, /"highPrice":\s*"1590"/);
+    assert.match(html, /"offerCount":\s*"3"/);
+    assert.doesNotMatch(html, /"highPrice":\s*"1990"/, 'ต้องไม่เหลือราคาเดิมที่ฝังไว้');
   });
 
   test('เปิดไฟล์ต้นแบบตรง ๆ ไม่ได้ ต้องเด้งกลับหน้าแรก', async () => {
@@ -146,6 +161,15 @@ describe('การสร้าง HTML ส่วนราคา', () => {
     assert.match(make(3), /grid c3/);
     assert.match(make(4), /grid c4/);
     assert.match(make(6), /grid c4/);
+  });
+
+  test('ราคาที่เป็นข้อความ ไม่ถูกนับเป็น 0 บาท', () => {
+    // "ติดต่อเรา" ไม่มีตัวเลข ถ้าเผลอแปลงเป็นเลขจะได้ 0
+    // แล้ว Google จะเข้าใจว่ามีแพ็กเกจฟรีทั้งที่ไม่มี
+    assert.equal(offersJson([{ price: 'ติดต่อเรา' }]), null, 'ไม่มีราคาเป็นตัวเลขเลย = ไม่ประกาศราคา');
+    const mixed = offersJson([{ price: '฿590' }, { price: 'ติดต่อสอบถาม' }]);
+    assert.equal(mixed.offerCount, '1', 'นับเฉพาะแพ็กเกจที่ราคาเป็นตัวเลข');
+    assert.equal(mixed.lowPrice, '590');
   });
 
   test('escapeHtml ปิดอักขระที่ใช้แทรกโค้ดได้ครบ', () => {

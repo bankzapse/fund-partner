@@ -304,7 +304,7 @@ export const DEFAULT_SETTINGS = {
       },
       {
           "name": "เริ่มต้น",
-          "price": "฿390",
+          "price": "฿590",
           "per": "/ เดือน",
           "features": [
               "ผู้ใช้ 7 คน",
@@ -316,7 +316,7 @@ export const DEFAULT_SETTINGS = {
       },
       {
           "name": "มาตรฐาน",
-          "price": "฿790",
+          "price": "฿990",
           "per": "/ เดือน",
           "features": [
               "ผู้ใช้ 10 คน",
@@ -328,7 +328,7 @@ export const DEFAULT_SETTINGS = {
       },
       {
           "name": "ไม่จำกัด",
-          "price": "฿1,990",
+          "price": "฿1,590",
           "per": "/ เดือน",
           "features": [
               "ผู้ใช้ไม่จำกัด",

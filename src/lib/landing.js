@@ -85,6 +85,46 @@ ${cards}
 </section>`;
 }
 
+/**
+ * สร้างข้อมูลราคาที่ส่งให้ Google (AggregateOffer) จากแพ็กเกจจริง
+ *
+ * ต้องสร้างเอง ไม่ใช่ฝังตายไว้ในไฟล์ ไม่งั้นพอผู้ดูแลแก้ราคาแล้ว
+ * Google จะยังโชว์ช่วงราคาเก่าในหน้าผลค้นหา ซึ่งไม่ตรงกับหน้าเว็บจริง
+ *
+ * แพ็กเกจที่ราคาไม่ใช่ตัวเลข (เช่น "ติดต่อสอบถาม") จะไม่ถูกนับ
+ * เพราะ Google ต้องการตัวเลขเท่านั้น
+ */
+export function offersJson(plans) {
+  const numbers = plans
+    .map((p) => String(p.price ?? '').replace(/[^\d.]/g, ''))
+    // ต้องคัดข้อความที่ไม่มีตัวเลขเลยออก "ก่อน" แปลงเป็นตัวเลข
+    // ไม่งั้น "ติดต่อเรา" จะกลายเป็นสตริงว่าง แล้ว Number('') = 0
+    // ทำให้ Google เห็นว่ามีแพ็กเกจราคา 0 บาททั้งที่ไม่มีจริง
+    .filter((s) => /\d/.test(s))
+    .map(Number)
+    .filter(Number.isFinite);
+
+  if (!numbers.length) return null;
+  return {
+    '@type': 'AggregateOffer',
+    priceCurrency: 'THB',
+    lowPrice: String(Math.min(...numbers)),
+    highPrice: String(Math.max(...numbers)),
+    offerCount: String(numbers.length),
+  };
+}
+
+/** แทนที่บล็อก offers เดิมในข้อมูลโครงสร้างสำหรับ Google */
+function replaceOffers(html, plans) {
+  const offers = offersJson(plans);
+  // ไม่มีราคาให้ประกาศ ก็เอาบล็อก offers ออกทั้งก้อน
+  // ปล่อยตัวเลขเก่าค้างไว้จะแย่กว่าไม่มีเลย
+  const replacement = offers
+    ? `"offers": ${JSON.stringify(offers, null, 6).replace(/\n/g, '\n      ')},`
+    : '';
+  return html.replace(/"offers":\s*\{[\s\S]*?\n {6}\},/, replacement);
+}
+
 let template = null;
 
 /** คืน HTML ของหน้าแนะนำระบบทั้งหน้า พร้อมราคาล่าสุด */
@@ -94,7 +134,8 @@ export async function renderLanding(publicDir) {
     template = readFileSync(join(publicDir, 'landing.html'), 'utf8');
   }
   const data = await pricingData();
-  const html = template.replace('<!--PRICING-->', renderPricing(data));
+  let html = template.replace('<!--PRICING-->', renderPricing(data));
+  html = replaceOffers(html, data.plans);
   // ไม่มีราคาให้แสดง ก็เอาลิงก์ "ราคา" ในเมนูออกด้วย ไม่งั้นกดแล้วไม่ไปไหน
   // ลิงก์นี้อยู่ 2 ที่: เมนูบนสุด และรายการในส่วนท้ายเว็บที่ห่อด้วย <li>
   // ต้องเก็บ <li> ออกไปด้วย ไม่งั้นจะเหลือจุดหัวข้อว่าง ๆ ค้างอยู่
