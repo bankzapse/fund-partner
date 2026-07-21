@@ -108,6 +108,11 @@ export async function createApp() {
       .catch(next);
   });
 
+  // กันไม่ให้เปิดไฟล์ต้นแบบตรง ๆ ได้
+  // ไฟล์นี้ยังไม่ได้เติมราคา ถ้า Google เก็บไปจะกลายเป็นเนื้อหาซ้ำที่ไม่มีราคา
+  // ต้องดักก่อน express.static ไม่งั้นไฟล์จะถูกส่งออกไปก่อน
+  app.get('/landing.html', (_req, res) => res.redirect(301, '/'));
+
   app.use(express.static(PUBLIC_DIR));
 
   // ตัวระบบอยู่ใต้ /app ทั้งหมด (ภายในใช้ hash routing เช่น /app#/debtors)
