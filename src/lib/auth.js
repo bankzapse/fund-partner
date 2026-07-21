@@ -10,6 +10,15 @@ export const COOKIE_NAME = 'fp_session';
 // แฮชหลอกสำหรับเผาเวลาเมื่อไม่พบชื่อผู้ใช้ (ไม่มีรหัสผ่านใดตรงกับแฮชนี้)
 const DUMMY_HASH = bcrypt.hashSync('fund-partner-timing-equalizer', 10);
 
+// ชื่อชั้นการนับสำหรับใส่ใน Audit Log ให้เจ้าของกิจการอ่านรู้เรื่อง
+// เดิมเขียนเป็น "ถ้าไม่ใช่ user ก็คือ IP" ซึ่งพอเพิ่มชั้น user_ip เข้ามา
+// ทำให้ log ขึ้นว่า "ล็อก IP somchai|::1" ทั้งที่เป็นคู่ชื่อผู้ใช้กับ IP
+const SCOPE_LABEL = {
+  user_ip: 'ชื่อผู้ใช้+IP',
+  user: 'ชื่อผู้ใช้',
+  ip: 'IP',
+};
+
 export function hashPassword(plain) {
   if (!plain || String(plain).length < 6) {
     throw Object.assign(new Error('รหัสผ่านต้องยาวอย่างน้อย 6 ตัวอักษร'), { status: 400 });
@@ -44,7 +53,7 @@ export async function login({ username, password, ip }) {
         entity: 'user',
         entityId: user?.id ?? null,
         ip,
-        reason: locked.map((l) => `ล็อก ${l.scope === 'user' ? 'ชื่อผู้ใช้' : 'IP'} ${l.key} เป็นเวลา ${l.minutes} นาที`).join(' · '),
+        reason: locked.map((l) => `ล็อก ${SCOPE_LABEL[l.scope] ?? l.scope} ${l.key} เป็นเวลา ${l.minutes} นาที`).join(' · '),
       });
     }
     throw Object.assign(new Error('ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง'), { status: 401 });

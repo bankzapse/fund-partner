@@ -7,6 +7,7 @@ import { ROOT, PUBLIC_DIR, UPLOAD_DIR } from './lib/paths.js';
 import { db, getSettingInt, isServerless } from './db/index.js';
 import { COOKIE_NAME, userFromToken, purgeSessions } from './lib/auth.js';
 import { permissionSummary } from './lib/permissions.js';
+import { renderLanding } from './lib/landing.js';
 import { publicUser } from './lib/auth.js';
 
 import authRoutes from './routes/auth.js';
@@ -90,8 +91,23 @@ export async function createApp() {
   // ที่อยู่เดิมของหน้าแนะนำ — ส่งต่อถาวรมาที่หน้าแรก กันเนื้อหาซ้ำสองที่
   app.get('/welcome', (_req, res) => res.redirect(301, '/'));
 
-  // public/index.html คือหน้าแนะนำระบบ (SEO) จึงถูกเสิร์ฟที่ / โดยอัตโนมัติ
-  // ไม่ต้อง redirect ทำให้ Google เก็บหน้าแรกของโดเมนได้ตรง ๆ
+  // หน้าแนะนำระบบ (SEO) อยู่ที่ / โดยตรง ไม่ต้อง redirect
+  // Google จึงเก็บหน้าแรกของโดเมนได้ตรง ๆ
+  //
+  // เก็บไฟล์ไว้ชื่อ landing.html ไม่ใช่ index.html โดยตั้งใจ
+  // เพราะถ้าชื่อ index.html บน Vercel จะถูกเสิร์ฟเป็นไฟล์นิ่งก่อนถึงโค้ดนี้
+  // (Vercel ตรวจระบบไฟล์ก่อน rewrite เสมอ) ทำให้ราคาที่ตั้งไว้ไม่ถูกเติมลงไป
+  app.get('/', (_req, res, next) => {
+    renderLanding(PUBLIC_DIR)
+      .then((html) => {
+        // ให้ CDN เก็บไว้ 5 นาที และเสิร์ฟของเดิมไปพลางระหว่างดึงใหม่
+        // แก้ราคาแล้วจะเห็นผลภายในไม่กี่นาที โดยไม่ต้องปลุกเซิร์ฟเวอร์ทุกครั้งที่มีคนเข้า
+        res.setHeader('Cache-Control', 'public, max-age=0, s-maxage=300, stale-while-revalidate=600');
+        res.type('html').send(html);
+      })
+      .catch(next);
+  });
+
   app.use(express.static(PUBLIC_DIR));
 
   // ตัวระบบอยู่ใต้ /app ทั้งหมด (ภายในใช้ hash routing เช่น /app#/debtors)

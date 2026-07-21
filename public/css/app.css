@@ -322,6 +322,17 @@ input[type='file'] { padding: 0.45rem; font-size: 0.85rem; }
 .card.alert { border-color: #f0dcb8; box-shadow: inset 0.22rem 0 0 var(--amber); }
 .card.alert > h3 { color: #8a5f10; }
 
+/* การ์ดย่อยที่ซ้อนอยู่ในการ์ดอีกที เช่น แพ็กเกจราคาแต่ละอัน
+   ใช้พื้นหลังจาง ๆ แทนเงา ไม่งั้นเงาซ้อนเงาจะดูหนัก */
+.card.sub {
+  background: var(--slate-50, #f7f9fc);
+  border: 1px solid var(--line);
+  box-shadow: none;
+  padding: 0.9rem 1rem;
+  margin: 0;
+}
+.card.sub .rowline { margin-bottom: 0.5rem; }
+
 /* ---------- กราฟแท่ง ---------- */
 
 .bars { display: flex; align-items: flex-end; gap: 3px; height: 140px; padding-top: 0.5rem; }
