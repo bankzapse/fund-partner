@@ -26,32 +26,47 @@ const ok = (s) => say('  ' + C.ok('✓') + ' ' + s);
 const bad = (s) => say('  ' + C.bad('✗') + ' ' + s);
 const info = (s) => say('  ' + C.warn('·') + ' ' + s);
 
-const rl = createInterface({ input: stdin, output: stdout });
-const ask = (q) => new Promise((r) => rl.question(q, (a) => r(a.trim())));
+// สร้างตัวรับข้อมูลจากคีย์บอร์ดเมื่อใช้จริงเท่านั้น
+//
+// ถ้าสร้างตั้งแต่ตอนโหลดไฟล์ โปรเซสจะค้างรอ input ตลอด
+// ทำให้ไฟล์ทดสอบที่ import ฟังก์ชันจากที่นี่ไปใช้ ค้างไม่จบ
+let rl = null;
+function getRl() {
+  if (rl) return rl;
+  rl = createInterface({ input: stdin, output: stdout });
+  // ทำให้ readline เคารพ flag muted ตอนถามรหัสผ่าน
+  const origWrite = rl.output.write.bind(rl.output);
+  rl.output.write = (chunk, ...rest) => (rl.output.muted ? true : origWrite(chunk, ...rest));
+  return rl;
+}
+function closeRl() {
+  rl?.close();
+  rl = null;
+}
+
+const ask = (q) => new Promise((r) => getRl().question(q, (a) => r(a.trim())));
 
 /** ถามรหัสผ่านโดยไม่ให้ขึ้นบนจอ */
 function askHidden(q) {
   return new Promise((resolve) => {
+    const r = getRl();
     const onData = (ch) => {
       // กด Ctrl+C ระหว่างพิมพ์รหัสผ่าน ต้องคืนสถานะจอให้ปกติก่อนออก
       if (ch[0] === 0x03) { stdout.write('\n'); process.exit(130); }
     };
     stdin.on('data', onData);
-    const wasMuted = rl.output.muted;
-    rl.output.muted = false;
+    const wasMuted = r.output.muted;
+    r.output.muted = false;
     stdout.write(q);
-    rl.output.muted = true;
-    rl.question('', (a) => {
-      rl.output.muted = wasMuted;
+    r.output.muted = true;
+    r.question('', (a) => {
+      r.output.muted = wasMuted;
       stdin.off('data', onData);
       stdout.write('\n');
       resolve(a.trim());
     });
   });
 }
-// ทำให้ readline เคารพ flag muted ข้างบน
-const origWrite = rl.output.write.bind(rl.output);
-rl.output.write = (chunk, ...rest) => (rl.output.muted ? true : origWrite(chunk, ...rest));
 
 const nowISO = () => new Date().toISOString();
 
@@ -70,6 +85,83 @@ const ROLES = {
   4: { role: 'accountant', label: 'บัญชี — ดูข้อมูลการเงิน ไม่ยุ่งกับสัญญา' },
 };
 
+/**
+ * บอกสาเหตุที่น่าจะเป็นเมื่อต่อฐานข้อมูลไม่ได้
+ *
+ * ตรวจจากตัว connection string เองล้วน ๆ ไม่แตะรหัสผ่านจริง
+ * และไม่พิมพ์รหัสผ่านออกจอ บอกได้แค่ความยาวกับลักษณะ
+ */
+export function diagnose(url, err) {
+  const msg = String(err?.message ?? '');
+  let u = null;
+  try { u = new URL(url); } catch { /* อ่าน URL ไม่ออก */ }
+
+  if (!u) {
+    bad('อ่าน connection string ไม่ออก');
+    info('มักเกิดจากรหัสผ่านมีอักขระพิเศษที่ยังไม่ได้แปลง');
+    info('เช่น @ ต้องเป็น %40 · # เป็น %23 · / เป็น %2F · : เป็น %3A');
+    return;
+  }
+
+  const pw = decodeURIComponent(u.password ?? '');
+
+  // รหัสผ่านผิด — ไล่สาเหตุที่พบบ่อยที่สุดก่อน
+  if (/SASL|password authentication/i.test(msg)) {
+    say('  ' + C.head('รหัสผ่านไม่ตรง — ไล่ตรวจตามนี้'));
+    say();
+
+    if (/^\[.*\]$/.test(pw) || /YOUR.?PASSWORD/i.test(pw)) {
+      bad('ยังไม่ได้แทนที่ [YOUR-PASSWORD] ด้วยรหัสผ่านจริง  ← สาเหตุแน่นอน');
+      info('ลบวงเล็บเหลี่ยมออกด้วย แล้วใส่รหัสผ่านฐานข้อมูลที่ตั้งไว้');
+      return;
+    }
+
+    say(`     รหัสผ่านที่ใส่มายาว ${pw.length} ตัวอักษร`);
+    say('     ถ้าไม่ตรงกับที่จำได้ แปลว่าคัดลอกมาไม่ครบหรือมีช่องว่างติดมา');
+    say();
+
+    const special = [...new Set(pw.match(/[@#?/:%&+= ]/g) ?? [])];
+    if (special.length) {
+      bad(`รหัสผ่านมีอักขระพิเศษ: ${special.join(' ')}`);
+      info('ต้องแปลงก่อนใส่ใน URL — @ → %40 · # → %23 · ? → %3F');
+      info('/ → %2F · : → %3A · % → %25 · เว้นวรรค → %20');
+      info('ถ้าแปลงแล้วยังไม่ได้ แนะนำตั้งรหัสใหม่ให้มีแต่ตัวอักษรกับตัวเลข');
+    } else {
+      info('รหัสผ่านไม่มีอักขระที่ต้องแปลง แสดงว่ารหัสไม่ถูกต้องจริง ๆ');
+    }
+    say();
+    say('  ' + C.head('ตั้งรหัสฐานข้อมูลใหม่ได้ ไม่กระทบข้อมูล'));
+    say('     Supabase → Settings → Database → Reset database password');
+    say('     ' + C.warn('ตั้งใหม่แล้วต้องอัปเดตใน Vercel ด้วย ไม่งั้นเว็บที่รันอยู่จะล่ม:'));
+    say('       npx vercel env rm DATABASE_URL production');
+    say('       npx vercel env add DATABASE_URL production --sensitive');
+    say('       npx vercel --prod');
+    return;
+  }
+
+  // ต้องตรวจก่อน ENOTFOUND เพราะ Supabase ส่งคำว่า ENOTFOUND มาด้วย
+  // ทั้งที่ความหมายคือ "ไม่พบผู้ใช้ในระบบ" ไม่ใช่หาโฮสต์ไม่เจอ
+  // ถ้าไม่แยก จะแนะนำให้ไปตรวจเน็ตทั้งที่ปัญหาอยู่ที่ชื่อผู้ใช้
+  if (/tenant|user .* not found/i.test(msg)) {
+    bad(`ไม่พบผู้ใช้ ${decodeURIComponent(u.username ?? '')} ในระบบ`);
+    info('ชื่อผู้ใช้ของ Transaction pooler ต้องเป็นรูปแบบ postgres.xxxxxxxx');
+    info('(มีจุดกับรหัสโปรเจกต์ต่อท้าย) ไม่ใช่ postgres เฉย ๆ');
+    info('คัดลอกใหม่จาก Supabase → Connect → Transaction pooler');
+    return;
+  }
+  if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(msg)) {
+    bad(`หาโฮสต์ ${u.hostname} ไม่เจอ`);
+    info('ตรวจว่าคัดลอกมาครบ และเน็ตใช้งานได้');
+    return;
+  }
+  if (/ETIMEDOUT|ECONNREFUSED|timeout/i.test(msg)) {
+    bad('ต่อไม่ติด อาจเป็นเพราะใช้ Dedicated pooler ซึ่งเป็น IPv6 อย่างเดียว');
+    info('ใช้ Transaction pooler พอร์ต 6543 แทน (โฮสต์ลงท้าย pooler.supabase.com)');
+    return;
+  }
+  info('ลองรัน bash scripts/check-connection.sh เพื่อดูรายละเอียดเพิ่ม');
+}
+
 async function main() {
   say();
   say(C.head('▸ เตรียมฐานข้อมูลจริงก่อนเปิดใช้งาน'));
@@ -78,7 +170,7 @@ async function main() {
   say();
 
   const DB_URL = await askHidden('  วาง connection string ของ Supabase (จะไม่ขึ้นบนจอ): ');
-  if (!DB_URL) { bad('ไม่ได้ใส่อะไรมา'); rl.close(); process.exit(1); }
+  if (!DB_URL) { bad('ไม่ได้ใส่อะไรมา'); closeRl(); process.exit(1); }
 
   const pool = new pg.Pool({
     connectionString: DB_URL,
@@ -91,8 +183,9 @@ async function main() {
     ok(`ต่อได้ — ฐานข้อมูล ${who.rows[0].db}`);
   } catch (err) {
     bad('ต่อไม่ได้: ' + err.message);
-    info('ลองรัน bash scripts/check-connection.sh เพื่อดูว่าติดตรงไหน');
-    await pool.end(); rl.close(); process.exit(1);
+    say();
+    diagnose(DB_URL, err);
+    await pool.end(); closeRl(); process.exit(1);
   }
 
   // ---- 1. ดูว่าตอนนี้มีอะไรอยู่บ้าง ----------------------------------------
@@ -176,7 +269,7 @@ async function main() {
       } catch (err) {
         await client.query('ROLLBACK');
         bad('ล้างไม่สำเร็จ ย้อนกลับทั้งหมดแล้ว ไม่มีอะไรเปลี่ยน: ' + err.message);
-        client.release(); await pool.end(); rl.close(); process.exit(1);
+        client.release(); await pool.end(); closeRl(); process.exit(1);
       } finally {
         client.release();
       }
@@ -366,11 +459,14 @@ async function main() {
   info('ไฟล์นี้ไม่มีรหัสผ่าน ส่งให้ผมดูได้');
 
   await pool.end();
-  rl.close();
+  closeRl();
 }
 
+// รันเฉพาะตอนถูกเรียกเป็นสคริปต์ ไม่ใช่ตอนถูก import มาทดสอบ
+if (import.meta.main) {
 main().catch((err) => {
   bad('เกิดข้อผิดพลาด: ' + err.message);
-  rl.close();
+  closeRl();
   process.exit(1);
 });
+}
