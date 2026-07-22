@@ -324,7 +324,13 @@ async function reyodTab(q) {
     { class: 'card' },
     el('h3', {}, 'ประวัติการรียอดและความเชื่อมโยงของสัญญา'),
     table(
-      ['วันที่', 'ลูกหนี้', 'สัญญาเดิม', 'สัญญาใหม่', { label: 'เงินต้นที่ยกไป', num: true }, { label: 'เงินเพิ่มใหม่', num: true }, { label: 'ยอดสัญญาใหม่', num: true }, 'ผู้ทำรายการ'],
+      // แยกเงินต้นกับดอกเบี้ยเดิมที่ยกไป ไม่งั้นสองคอลัมน์แรกบวกกันแล้ว
+      // ไม่เท่ายอดสัญญาใหม่ ผู้อ่านจะเห็นยอดโตขึ้นเองโดยไม่มีที่มา
+      ['วันที่', 'ลูกหนี้', 'สัญญาเดิม', 'สัญญาใหม่',
+        { label: 'เงินต้นที่ยกไป', num: true },
+        { label: 'ดอกเดิมที่ยกไป', num: true },
+        { label: 'เงินเพิ่มใหม่', num: true },
+        { label: 'ยอดสัญญาใหม่', num: true }, 'ผู้ทำรายการ'],
       items.map((r) =>
         el(
           'tr',
@@ -334,6 +340,7 @@ async function reyodTab(q) {
           el('td', {}, el('a', { href: `#/contracts/${r.from_contract_id}` }, r.from_no)),
           el('td', {}, el('a', { href: `#/contracts/${r.to_contract_id}` }, r.to_no)),
           el('td', { class: 'num' }, baht(r.carried_principal)),
+          el('td', { class: 'num' }, baht(r.carried_interest ?? 0)),
           el('td', { class: 'num' }, baht(r.new_money)),
           el('td', { class: 'num' }, baht(r.new_principal)),
           el('td', { class: 'small' }, r.created_by_name ?? '-'),

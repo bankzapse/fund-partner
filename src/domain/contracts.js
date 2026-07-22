@@ -164,7 +164,17 @@ export async function previewContract(input) {
   const docFee = p.docFee;
   const firstInst = p.deductFirst ? schedule[0].due_amount : 0;
   const grossOut = p.grossOut ?? p.principalAmount;
-  const cashToCustomer = Math.max(0, grossOut - docFee - firstInst);
+  // ห้ามหักเกินเงินที่จ่ายออกจริง
+  //
+  // เดิมใช้ Math.max(0, ...) ซึ่งกลืนส่วนที่ติดลบทิ้งเงียบ ๆ
+  // ผลคือระบบยังบันทึกค่าทำเอกสารและงวดแรกเป็นเงินเข้าเต็มจำนวน
+  // ทั้งที่ไม่มีเงินสดจ่ายออกให้หัก เงินสดในระบบจึงงอกขึ้นเองทุกครั้งที่รียอด
+  // (รียอดโดยไม่เติมเงิน + ค่าตั้งต้นของระบบ = เงินงอก 170 บาทต่อครั้ง)
+  //
+  // แก้โดยหักได้ไม่เกินเงินที่มีจริง ค่าเอกสารก่อน แล้วที่เหลือค่อยหักงวดแรก
+  const feeCharged = Math.min(docFee, grossOut);
+  const firstCharged = Math.min(firstInst, Math.max(0, grossOut - feeCharged));
+  const cashToCustomer = grossOut - feeCharged - firstCharged;
 
   const warnings = [];
   // โหมดดอกเหมารวมกระจายเงินต้นครบเสมอโดยการออกแบบ จึงไม่ต้องเตือนสองข้อนี้
@@ -182,11 +192,12 @@ export async function previewContract(input) {
   // หักงวดแรกมากกว่าเงินที่ปล่อยจริง = บันทึกรับเงินสดที่ไม่มีอยู่จริง
   // เกิดได้ในโหมดเหมารวมเพราะผู้ใช้ไม่ได้กรอกค่างวดเอง ระบบคำนวณให้จากอัตรา %
   // จึงมองไม่เห็นว่ากำลังหักเกิน ต่างจากโหมดเดิมที่กรอกค่างวดเองแล้วเห็นตัวเลข
-  if (p.deductFirst && firstInst + docFee > grossOut) {
+  if (feeCharged < docFee || firstCharged < firstInst) {
     warnings.push(
-      `งวดแรกที่หัก ${formatBaht(firstInst)} บาท รวมค่าทำเอกสาร ${formatBaht(docFee)} บาท ` +
-        `มากกว่าเงินที่จ่ายออกจริง ${formatBaht(grossOut)} บาท — ` +
-        `ตรวจว่าตั้งใจหรือไม่ ถ้าไม่ ให้ปิดการหักงวดแรกหรือลดจำนวนงวดลง`,
+      `เงินที่จ่ายออกจริงมีแค่ ${formatBaht(grossOut)} บาท ` +
+        `จึงหักค่าทำเอกสารได้ ${formatBaht(feeCharged)} จาก ${formatBaht(docFee)} บาท ` +
+        `และหักงวดแรกได้ ${formatBaht(firstCharged)} จาก ${formatBaht(firstInst)} บาท — ` +
+        `ส่วนที่หักไม่ได้จะไม่ถูกบันทึกเป็นเงินเข้า ถ้าต้องการเก็บครบ ให้เก็บเป็นเงินสดแยกต่างหาก`,
     );
   }
 
@@ -210,8 +221,11 @@ export async function previewContract(input) {
       total_interest: totalInterest,
       total_principal_scheduled: totalPrincipalScheduled,
     },
-    doc_fee: docFee,
-    first_installment: firstInst,
+    doc_fee: feeCharged,
+    first_installment: firstCharged,
+    // ค่าที่ตั้งใจหักเดิม เก็บไว้เพื่อเตือนเมื่อหักได้ไม่ครบ
+    doc_fee_intended: docFee,
+    first_installment_intended: firstInst,
     gross_out: grossOut,
     cash_to_customer: cashToCustomer,
     warnings,
@@ -613,6 +627,16 @@ export async function reyod(input, ctx) {
     const old = await getContract(input.fromContractId);
     if (!old) throw new BusinessError('ไม่พบสัญญาเดิม');
     if (old.status !== 'active') throw new BusinessError('สัญญาเดิมถูกปิดไปแล้ว');
+
+    // การรียอดสร้างรายการเงินและรายได้ จึงต้องติดด่านเดียวกับการรับชำระ
+    // ไม่งั้นตัวเลขของวันที่ปิดบัญชีไปแล้วจะเปลี่ยนย้อนหลังได้เงียบ ๆ
+    const reyodDate = input.startDate ?? today();
+    const closed = await get(`SELECT * FROM daily_closings WHERE closing_date = :d`, { d: reyodDate });
+    if (closed && !(ctx?.user?.role === 'owner' && input.ownerOverride === true)) {
+      throw new BusinessError(
+        `วันที่ ${reyodDate} ปิดยอดประจำวันแล้ว การรียอดย้อนหลังต้องได้รับอนุมัติจากเจ้าของ`,
+      );
+    }
 
     const newMoney = assertNonNegative(input.newMoney ?? 0, 'เงินเพิ่มใหม่');
     const out = await contractOutstanding(old);

@@ -35,7 +35,9 @@ router.get(
               -- ยอดคงเหลือที่ใช้ตอนรียอด ขึ้นกับโหมดคิดดอกของสัญญา
               -- โหมดเหมารวม: ยอดหนี้รวม − ยอดชำระสะสม (มีดอกเดิมรวมอยู่ด้วย)
               -- โหมดเดิม: เงินต้นคงเหลือเหมือนเดิม
-              CASE WHEN c.interest_mode = 'flat_total' AND c.total_due > 0
+              -- สัญญาที่ปิดไปแล้วไม่มียอดคงเหลือ ไม่งั้นจะยังค้างยอดเดิมให้เห็น
+              CASE WHEN c.status <> 'active' THEN 0
+                   WHEN c.interest_mode = 'flat_total' AND c.total_due > 0
                    THEN GREATEST(0, c.total_due - COALESCE(
                           (SELECT SUM(p.amount_paid) FROM payments p
                             WHERE p.contract_id = c.id AND p.is_void = 0), 0))
@@ -191,6 +193,7 @@ function mapReyodBody(b = {}) {
     reason: b.reason,
     interestMode: b.interest_mode,
     interestRateBp: b.interest_rate_bp === undefined ? undefined : Number(b.interest_rate_bp),
+    ownerOverride: b.owner_override === true,
   };
 }
 
