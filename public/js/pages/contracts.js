@@ -98,6 +98,14 @@ export async function renderNewContract() {
   const installment = el('input', { type: 'number', inputmode: 'decimal', step: '0.01', value: '50' });
   const interest = el('input', { type: 'number', inputmode: 'decimal', step: '0.01', value: '20' });
   const periods = el('input', { type: 'number', inputmode: 'numeric', value: '24' });
+  // โหมดคิดดอกเบี้ย — เหมารวมต่อสัญญาเป็นค่าตั้งต้นของเงินกู้รายวัน
+  const modeSel = el(
+    'select',
+    {},
+    el('option', { value: 'flat_total' }, 'เหมารวมต่อสัญญา (กรอกเป็น %)'),
+    el('option', { value: 'per_installment' }, 'กำหนดดอกเป็นบาทต่องวด'),
+  );
+  const ratePct = el('input', { type: 'number', inputmode: 'decimal', step: '0.01', value: '20' });
   const startDate = el('input', { type: 'date', value: todayISO() });
   const docFee = el('input', {
     type: 'number', step: '0.01', inputmode: 'decimal',
@@ -105,6 +113,19 @@ export async function renderNewContract() {
   });
   const deductFirst = el('input', { type: 'checkbox', checked: state.settings.deduct_first_installment === '1' });
   const note = el('textarea', { rows: 2 });
+
+  const rateRow = el(
+    'div',
+    {},
+    field('ดอกเบี้ยต่อสัญญา (%) *', ratePct,
+      'คิดครั้งเดียวจากเงินต้น เช่น กู้ 2,000 ดอก 20% = ดอก 400 ยอดหนี้รวม 2,400'),
+  );
+  const legacyRow = el(
+    'div',
+    { class: 'grid k2' },
+    field('ค่างวด (บาท) *', installment, 'ดอกลอยจะเท่ากับดอกเบี้ยต่อรอบ'),
+    field('ดอกเบี้ยต่องวด (บาท) *', interest),
+  );
 
   const previewBox = el('div', { class: 'card' });
   const submit = el('button', { class: 'btn block', disabled: true }, 'ยืนยันสร้างสัญญา');
@@ -118,6 +139,10 @@ export async function renderNewContract() {
       installment_amount: toSatang(installment.value),
       interest_per_inst: toSatang(interest.value),
       num_installments: Number(periods.value || 0),
+      interest_mode: modeSel.value,
+      // ส่งอัตราเป็นจำนวนเต็มหน่วยหนึ่งในหมื่น (20.5% = 2050)
+      // ห้ามส่งเป็นทศนิยม เพราะฝั่งเซิร์ฟเวอร์ตัดเศษทิ้งแล้วดอกจะน้อยกว่าที่ตกลงไว้
+      interest_rate_bp: Math.round(Number(ratePct.value || 0) * 100),
       start_date: startDate.value,
       doc_fee: toSatang(docFee.value),
       deduct_first: deductFirst.checked,
@@ -125,7 +150,20 @@ export async function renderNewContract() {
     };
   }
 
+  /** ซ่อน/แสดงช่องให้ตรงกับโหมดที่เลือก จะได้ไม่กรอกช่องที่ระบบไม่ได้ใช้ */
+  function syncMode() {
+    // ดอกลอยยังไม่รองรับโหมดเหมารวม จึงบังคับกลับเป็นโหมดเดิม
+    const floating = typeSel.value === 'floating';
+    if (floating && modeSel.value === 'flat_total') modeSel.value = 'per_installment';
+    modeSel.disabled = floating;
+
+    const flat = modeSel.value === 'flat_total';
+    rateRow.style.display = flat ? '' : 'none';
+    legacyRow.style.display = flat ? 'none' : '';
+  }
+
   async function refresh() {
+    syncMode();
     // ดอกลอย: ค่างวด = ดอกเบี้ยต่อรอบ
     installment.disabled = typeSel.value === 'floating';
     if (typeSel.value === 'floating') installment.value = interest.value;
@@ -157,7 +195,7 @@ export async function renderNewContract() {
     }
   }
 
-  for (const input of [debtorSel, typeSel, principal, installment, interest, periods, startDate, docFee, deductFirst]) {
+  for (const input of [debtorSel, typeSel, modeSel, ratePct, principal, installment, interest, periods, startDate, docFee, deductFirst]) {
     input.addEventListener('change', refresh);
     input.addEventListener('input', refresh);
   }
@@ -184,13 +222,20 @@ export async function renderNewContract() {
       { class: 'card' },
       field('ลูกหนี้ *', debtorSel),
       field('ประเภทสัญญา *', typeSel),
+      field('วิธีคิดดอกเบี้ย *', modeSel),
       el(
         'div',
         { class: 'grid k2' },
         field('เงินต้น (บาท) *', principal),
         field('จำนวนงวด *', periods),
-        field('ค่างวด (บาท) *', installment, 'ดอกลอยจะเท่ากับดอกเบี้ยต่อรอบ'),
-        field('ดอกเบี้ยต่องวด (บาท) *', interest),
+      ),
+      // ช่องของโหมดเหมารวม — กรอกอัตราเดียว ระบบคำนวณยอดรวมและค่างวดให้
+      rateRow,
+      // ช่องของโหมดเดิม — กรอกค่างวดกับดอกต่องวดเอง
+      legacyRow,
+      el(
+        'div',
+        { class: 'grid k2' },
         field('วันเริ่มสัญญา *', startDate),
         field('ค่าทำเอกสาร (บาท)', docFee),
       ),

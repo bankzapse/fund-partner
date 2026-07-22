@@ -162,6 +162,8 @@ function mapContractBody(b = {}) {
     deductFirst: b.deduct_first,
     note: b.note,
     reason: b.reason,
+    interestMode: b.interest_mode,
+    interestRateBp: b.interest_rate_bp === undefined ? undefined : Number(b.interest_rate_bp),
   };
 }
 
@@ -179,6 +181,8 @@ function mapReyodBody(b = {}) {
     employeeId: b.employee_id === undefined ? undefined : intParam(b.employee_id),
     note: b.note,
     reason: b.reason,
+    interestMode: b.interest_mode,
+    interestRateBp: b.interest_rate_bp === undefined ? undefined : Number(b.interest_rate_bp),
   };
 }
 

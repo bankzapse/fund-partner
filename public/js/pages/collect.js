@@ -125,6 +125,70 @@ async function paymentPanel(contractId) {
     }, 'ไม่จ่าย'),
   );
 
+  // ---- จ่ายฟรี / พักงวด ------------------------------------------------------
+  //
+  // แยกออกจากปุ่มลัดข้างบนโดยตั้งใจ เพราะเป็นคนละเรื่องกันทั้งหมด
+  // ปุ่มข้างบนคือการบันทึกรับชำระตามสัญญา ส่วนอันนี้คือเงินที่ไม่ตัดยอดสัญญาเลย
+  // ถ้าวางรวมกันพนักงานจะกดผิดแล้วยอดหนี้เพี้ยน
+  const freeAmount = el('input', { type: 'number', inputmode: 'decimal', step: '0.01', placeholder: '0.00' });
+  const freeList = el('div', { class: 'small muted' });
+
+  async function loadFreeList() {
+    try {
+      const { items } = await api.get(`/api/payments/free/${contractId}`);
+      clear(freeList).append(
+        items.length
+          ? el('div', {}, `บันทึกจ่ายฟรีแล้ว ${items.length} ครั้ง · ล่าสุด ${thaiDate(items[0].entry_date)} จำนวน ${baht(items[0].amount)} บาท`)
+          : el('div', {}, 'ยังไม่มีรายการจ่ายฟรีของสัญญานี้'),
+      );
+    } catch { /* ไม่ใช่เรื่องคอขาดบาดตาย ปล่อยว่างไว้ */ }
+  }
+
+  const freeSubmit = el('button', {
+    class: 'btn ghost',
+    onclick: async () => {
+      const satang = toSatang(freeAmount.value);
+      if (!satang) return toastError(new Error('กรอกจำนวนเงินก่อน'));
+      freeSubmit.disabled = true;
+      try {
+        await api.post('/api/payments/free', { contract_id: contractId, amount: satang });
+        toast('บันทึกจ่ายฟรีแล้ว ยอดสัญญาไม่เปลี่ยน', 'ok');
+        freeAmount.value = '';
+        await loadFreeList();
+      } catch (err) {
+        // ถ้าเป็นการเตือนว่าบันทึกซ้ำ ให้ถามยืนยันแล้วบันทึกทับได้
+        if (String(err.message).includes('บันทึกจ่ายฟรีของสัญญานี้ไปแล้ว')) {
+          if (confirm(err.message + '\n\nต้องการบันทึกเพิ่มอีกรายการหรือไม่')) {
+            try {
+              await api.post('/api/payments/free', {
+                contract_id: contractId, amount: satang, allow_duplicate: true,
+              });
+              toast('บันทึกจ่ายฟรีเพิ่มแล้ว', 'ok');
+              freeAmount.value = '';
+              await loadFreeList();
+            } catch (e2) { toastError(e2); }
+          }
+        } else {
+          toastError(err);
+        }
+      }
+      freeSubmit.disabled = false;
+    },
+  }, 'บันทึกจ่ายฟรี');
+
+  const freeCard = el(
+    'div',
+    { class: 'card' },
+    el('h3', {}, 'จ่ายฟรี / พักงวด'),
+    el('div', { class: 'hint' },
+      'ใช้เมื่อลูกหนี้ส่งงวดปกติไม่ไหว แล้วจ่ายเงินจำนวนหนึ่งแทนเพื่อพักงวดวันนี้ ' +
+      'เงินก้อนนี้บันทึกเป็นรายรับแยกต่างหาก ไม่ตัดยอดสัญญา ไม่ตัดเงินต้น ' +
+      'ไม่ลดจำนวนงวด และไม่นับเป็นยอดค้าง'),
+    el('div', { class: 'searchbar' }, freeAmount, freeSubmit),
+    freeList,
+  );
+  loadFreeList();
+
   submit.addEventListener('click', async () => {
     submit.disabled = true;
     try {
@@ -213,9 +277,14 @@ async function paymentPanel(contractId) {
       el('div', { class: 'mt' },
         el('a', { href: `#/contracts/${contractId}`, class: 'btn ghost sm', style: 'text-decoration:none' }, 'ดูสัญญาฉบับเต็ม')),
     ),
+    // วางไว้ท้ายสุด แยกจากส่วนรับชำระตามสัญญาให้ชัด
+    freeCard,
   );
 
-  if (s.is_closed) submit.disabled = true;
+  if (s.is_closed) {
+    submit.disabled = true;
+    freeSubmit.disabled = true;
+  }
   return box;
 }
 

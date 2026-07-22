@@ -6,6 +6,8 @@ import {
   voidPayment,
   listPayments,
   getPayment,
+  recordFreePayment,
+  freePaymentsFor,
 } from '../domain/payments.js';
 import { contractSummary, getContract } from '../domain/contracts.js';
 import { needsApproval } from '../lib/permissions.js';
@@ -83,6 +85,49 @@ router.get(
 );
 
 /** คำนวณและแสดงผลก่อนกดบันทึก (ข้อ 8) */
+// ---- จ่ายฟรี / พักงวด (เงินกู้รายวัน) ---------------------------------------
+//
+// อยู่ใต้ /api/payments ไม่ใช่ /api/cashbook โดยตั้งใจ
+// เพราะพนักงานเก็บเงินเป็นคนกดหน้างานจริง แต่สิทธิ์ cashbook ของตำแหน่งนี้เป็น "ไม่ได้"
+// ถ้าไปใช้ endpoint ของ cashbook จะโดนปฏิเสธทันที
+// และการเปิดสิทธิ์ cashbook ให้กว้างขึ้นจะเกินความจำเป็น (เห็นสรุปการเงินทั้งวันด้วย)
+router.post(
+  '/free',
+  need('payments_create'),
+  wrap(async (req, res) => {
+    const contractId = intParam(req.body?.contract_id);
+    // กันพนักงานเก็บเงินบันทึกข้ามเขตของคนอื่น ใช้ตัวเดียวกับเส้นทางรับชำระปกติ
+    const contract = await getContract(contractId);
+    if (!contract) return res.status(404).json({ error: 'ไม่พบสัญญา' });
+    await assertDebtorAccess(req.ctx.user, contract.debtor_id, 'payments_create');
+    res.status(201).json({
+      entry: await recordFreePayment(
+        {
+          contractId,
+          amount: intParam(req.body?.amount, 0),
+          paidDate: req.body?.paid_date,
+          note: req.body?.note,
+          allowDuplicate: req.body?.allow_duplicate === true,
+          ownerOverride: req.body?.owner_override === true,
+        },
+        req.ctx,
+      ),
+    });
+  }),
+);
+
+router.get(
+  '/free/:contractId',
+  need('debtors_view'),
+  wrap(async (req, res) => {
+    const contractId = intParam(req.params.contractId);
+    const contract = await getContract(contractId);
+    if (!contract) return res.status(404).json({ error: 'ไม่พบสัญญา' });
+    await assertDebtorAccess(req.ctx.user, contract.debtor_id, 'debtors_view');
+    res.json({ items: await freePaymentsFor(contractId) });
+  }),
+);
+
 router.post(
   '/preview',
   need('payments_create'),

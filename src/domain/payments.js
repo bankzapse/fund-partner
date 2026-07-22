@@ -1,6 +1,6 @@
-import { all, get, run, insert, tx, nextCounter } from '../db/index.js';
-import { assertNonNegative } from '../lib/money.js';
-import { today, nowISO, isDateStr } from '../lib/time.js';
+import { all, get, run, insert, tx, nextCounter, FREE_PAY_CATEGORY } from '../db/index.js';
+import { assertNonNegative, assertPositive, formatBaht } from '../lib/money.js';
+import { today, nowISO, isDateStr, addDays, addMonths } from '../lib/time.js';
 import { audit } from '../lib/audit.js';
 
 export class PaymentError extends Error {
@@ -428,5 +428,146 @@ export async function listPayments(filter = {}) {
      ORDER BY p.paid_date DESC, p.id DESC
      LIMIT :limit`,
     params,
+  );
+}
+
+/**
+ * บันทึกเงิน "จ่ายฟรี/พักงวด" (เงินกู้รายวัน)
+ *
+ * ใช้เมื่อลูกหนี้ส่งงวดปกติไม่ไหว แล้วจ่ายเงินจำนวนหนึ่งแทนเพื่อพักงวดวันนั้น
+ * เช่น งวดปกติ 100 บาท ลูกค้าจ่ายฟรี 40 บาท
+ *
+ * สิ่งที่รายการนี้ "ไม่ทำ" คือหัวใจของฟีเจอร์:
+ *   - ไม่ตัดยอดหนี้ตามสัญญา
+ *   - ไม่ตัดเงินต้น
+ *   - ไม่ลดจำนวนงวด
+ *   - ไม่บันทึกส่วนต่าง 60 บาทเป็นยอดค้าง
+ * วันนั้นถือเป็นวันพักงวด วันถัดไปกลับมาส่งงวดปกติ และยอดสัญญายังต้องชำระครบเท่าเดิม
+ *
+ * จึงบันทึกลง income_entries ไม่ใช่ payments — ดูเหตุผลเต็มที่ FREE_PAY_CATEGORY
+ */
+export async function recordFreePayment(input, ctx) {
+  return await tx(() => recordFreePaymentInTx(input, ctx));
+}
+
+async function recordFreePaymentInTx(input, ctx) {
+  const contract = await get(
+    `SELECT c.*, d.full_name AS debtor_name FROM contracts c
+     JOIN debtors d ON d.id = c.debtor_id WHERE c.id = :id`,
+    { id: input.contractId },
+  );
+  if (!contract) throw new PaymentError('ไม่พบสัญญา');
+  if (contract.status !== 'active') {
+    throw new PaymentError('สัญญานี้ปิดไปแล้ว บันทึกจ่ายฟรีไม่ได้');
+  }
+
+  const amount = assertPositive(input.amount, 'จำนวนเงินจ่ายฟรี');
+  const entryDate = input.paidDate ?? today();
+  if (!isDateStr(entryDate)) throw new PaymentError('วันที่ไม่ถูกต้อง');
+
+  // จำกัดช่วงวันที่ให้อยู่ในโลกความจริง
+  // ถ้าไม่จำกัด รายการวันอนาคตจะไปโผล่ในยอดปิดวันของวันนั้นและดันกำไรของงวดที่ยังมาไม่ถึง
+  const todayStr = today();
+  if (entryDate > todayStr) {
+    throw new PaymentError('บันทึกจ่ายฟรีล่วงหน้าไม่ได้');
+  }
+  if (entryDate < contract.start_date) {
+    throw new PaymentError(`บันทึกก่อนวันเริ่มสัญญา (${contract.start_date}) ไม่ได้`);
+  }
+
+  // ต้องมีด่านเดียวกับการรับชำระปกติ ไม่งั้นตัวเลขของวันที่ปิดบัญชีไปแล้ว
+  // จะเปลี่ยนย้อนหลังได้เงียบ ๆ ทั้งที่เส้นทางอื่นทุกเส้นถูกล็อกไว้หมดแล้ว
+  const closing = await get(`SELECT * FROM daily_closings WHERE closing_date = :d`, { d: entryDate });
+  if (closing && !(ctx?.user?.role === 'owner' && input.ownerOverride === true)) {
+    throw new PaymentError(
+      `วันที่ ${entryDate} ปิดยอดประจำวันแล้ว การบันทึกย้อนหลังต้องได้รับอนุมัติจากเจ้าของ`,
+    );
+  }
+
+  // กันบันทึกซ้ำในวันเดียวกัน เพราะรายการนี้ไม่โผล่ในประวัติการรับชำระ
+  // พนักงานจึงอาจกดซ้ำโดยไม่รู้ว่าบันทึกไปแล้ว
+  const dup = await get(
+    `SELECT id, amount FROM income_entries
+     WHERE contract_id = :cid AND entry_date = :d AND category = :cat AND is_void = 0`,
+    { cid: contract.id, d: entryDate, cat: FREE_PAY_CATEGORY },
+  );
+  if (dup && !input.allowDuplicate) {
+    throw new PaymentError(
+      `วันที่ ${entryDate} บันทึกจ่ายฟรีของสัญญานี้ไปแล้ว ${formatBaht(dup.amount)} บาท ` +
+        `ถ้าต้องการบันทึกเพิ่มอีกรายการ ให้ยืนยันอีกครั้ง`,
+    );
+  }
+
+  // เลื่อนวันครบกำหนดของงวดที่ยังไม่ปิด ออกไป 1 คาบ
+  //
+  // นี่คือสิ่งที่ทำให้คำว่า "พักงวด" เป็นจริง ไม่ใช่แค่ชื่อเรียก
+  // ถ้าไม่เลื่อน งวดของวันนี้จะกลายเป็นค้างชำระทันทีในวันพรุ่งนี้
+  // แล้วลูกหนี้จะถูกดันเป็นสถานะค้างชำระ ทั้งที่จ่ายเงินมาแล้วและตกลงกันว่าพัก
+  // ซึ่งขัดกับที่ระบุไว้ว่า "ไม่บันทึกยอดค้าง" และขัดกับข้อความบนหน้าจอเอง
+  //
+  // ยอดหนี้รวมไม่เปลี่ยน จำนวนงวดไม่เปลี่ยน แค่เลื่อนกำหนดออกไปหนึ่งคาบ
+  // ตรงกับที่ระบุว่า "วันถัดไปลูกหนี้กลับมาส่งงวดปกติ และยอดสัญญาเดิมยังต้องชำระครบ"
+  const shift = (d) => (contract.period_unit === 'month' ? addMonths(d, 1) : addDays(d, 1));
+  const pending = await all(
+    `SELECT id, due_date FROM installments
+     WHERE contract_id = :cid AND status <> 'paid' AND due_date >= :d
+     ORDER BY seq`,
+    { cid: contract.id, d: entryDate },
+  );
+  for (const row of pending) {
+    await run(`UPDATE installments SET due_date = :nd WHERE id = :id`, {
+      id: row.id,
+      nd: shift(row.due_date),
+    });
+  }
+
+  const now = nowISO();
+  const id = await insert(
+    `INSERT INTO income_entries
+       (entry_date, category, amount, description, contract_id, debtor_id, created_by, created_at)
+     VALUES (:d, :cat, :amt, :desc, :cid, :did, :uid, :now)`,
+    {
+      d: entryDate,
+      cat: FREE_PAY_CATEGORY,
+      amt: amount,
+      desc: input.note ?? `จ่ายฟรี/พักงวด สัญญา ${contract.contract_no}`,
+      cid: contract.id,
+      did: contract.debtor_id,
+      uid: ctx?.user?.id ?? null,
+      now,
+    },
+  );
+
+  await audit({
+    userId: ctx?.user?.id,
+    action: 'create',
+    entity: 'free_payment',
+    entityId: id,
+    after: {
+      contract_no: contract.contract_no,
+      amount,
+      entry_date: entryDate,
+      installments_shifted: pending.length,
+    },
+    ip: ctx?.ip,
+  });
+
+  return {
+    id,
+    contract_no: contract.contract_no,
+    amount,
+    entry_date: entryDate,
+    installments_shifted: pending.length,
+  };
+}
+
+/** รายการจ่ายฟรีของสัญญาหนึ่ง ใช้แสดงในหน้ารับชำระและหน้าสัญญา */
+export async function freePaymentsFor(contractId) {
+  return await all(
+    `SELECT id, entry_date, amount, description, is_void
+     FROM income_entries
+     WHERE contract_id = :cid AND category = :cat AND is_void = 0
+     ORDER BY entry_date DESC, id DESC`,
+    { cid: contractId, cat: FREE_PAY_CATEGORY },
   );
 }

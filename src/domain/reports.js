@@ -33,13 +33,16 @@ export async function financeSummary({ from, to, employeeId = null }) {
 
   const incomeP = get(
     `SELECT
-       COALESCE(SUM(CASE WHEN category = 'doc_fee' THEN amount ELSE 0 END), 0) AS doc_fee_income,
-       COALESCE(SUM(CASE WHEN category = :capIn  THEN amount ELSE 0 END), 0) AS capital_in,
-       COALESCE(SUM(CASE WHEN category NOT IN ('doc_fee', :capIn) THEN amount ELSE 0 END), 0) AS other_income,
-       COALESCE(SUM(amount), 0) AS total_income_entries
-     FROM income_entries
-     WHERE is_void = 0 AND entry_date BETWEEN :from AND :to`,
-    { from, to, capIn: CAPITAL_IN_CATEGORY },
+       COALESCE(SUM(CASE WHEN i.category = 'doc_fee' THEN i.amount ELSE 0 END), 0) AS doc_fee_income,
+       COALESCE(SUM(CASE WHEN i.category = :capIn  THEN i.amount ELSE 0 END), 0) AS capital_in,
+       COALESCE(SUM(CASE WHEN i.category NOT IN ('doc_fee', :capIn) THEN i.amount ELSE 0 END), 0) AS other_income,
+       COALESCE(SUM(i.amount), 0) AS total_income_entries
+     FROM income_entries i
+     WHERE i.is_void = 0 AND i.entry_date BETWEEN :from AND :to
+     ${employeeId ? `AND EXISTS (
+       SELECT 1 FROM contracts c2 WHERE c2.id = i.contract_id AND c2.employee_id = :emp
+     )` : ''}`,
+    { from, to, capIn: CAPITAL_IN_CATEGORY, emp: employeeId },
   );
 
   const expP = get(

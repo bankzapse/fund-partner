@@ -92,6 +92,17 @@ CREATE TABLE IF NOT EXISTS contracts (
   first_inst_deducted BIGINT  NOT NULL DEFAULT 0,
   cash_disbursed      BIGINT  NOT NULL DEFAULT 0,
   principal_remaining BIGINT  NOT NULL,
+  -- โหมดคิดดอกเบี้ย (เพิ่มภายหลัง — ดูบล็อก ALTER ท้ายไฟล์ด้วย)
+  --   per_installment = กรอกดอกเป็นบาทต่องวด (แบบเดิม)
+  --   flat_total      = ดอกเหมารวมคงที่ต่อสัญญา คิดเป็น % ของเงินต้น
+  interest_mode       TEXT    NOT NULL DEFAULT 'per_installment'
+                      CHECK (interest_mode IN ('per_installment','flat_total')),
+  -- อัตราดอกเบี้ยเก็บเป็นจำนวนเต็มหน่วยหนึ่งในหมื่น (basis point) เช่น 20% = 2000
+  -- เก็บเป็นจำนวนเต็มด้วยเหตุผลเดียวกับที่เงินเก็บเป็นสตางค์ คือกันค่าเพี้ยนจากทศนิยม
+  interest_rate_bp    INTEGER NOT NULL DEFAULT 0,
+  -- ยอดหนี้รวมตามสัญญา (เงินต้น + ดอกทั้งหมด) บันทึกไว้ตอนทำสัญญา
+  -- 0 = สัญญาที่สร้างก่อนมีโหมดนี้ ให้คำนวณจากตารางงวดแทน
+  total_due           BIGINT  NOT NULL DEFAULT 0,
   status              TEXT    NOT NULL DEFAULT 'active'
                       CHECK (status IN ('active','completed','closed_reyod','cancelled')),
   closed_at           TEXT,
@@ -276,6 +287,21 @@ CREATE TABLE IF NOT EXISTS approvals (
   decided_at    TEXT,
   decision_note TEXT
 );
+
+-- ---------------------------------------------------------------------------
+-- อัปเดตโครงสร้างสำหรับฐานข้อมูลที่สร้างไว้ก่อนหน้า
+--
+-- ไฟล์นี้ถูกรันใหม่ทุกครั้งที่แอปเชื่อมต่อฐานข้อมูล (ดู db() ใน src/db/index.js)
+-- ทุกบรรทัดจึงต้องรันซ้ำได้โดยไม่ error ไม่งั้นแอปจะล่มทั้งระบบตั้งแต่บูตครั้งที่สอง
+--
+-- ต้องเขียน CHECK ไว้ในบรรทัดเดียวกับ ADD COLUMN IF NOT EXISTS
+-- ห้ามแยกเป็น ADD CONSTRAINT ต่างหาก เพราะคำสั่งนั้นไม่มี IF NOT EXISTS
+-- จึงพังทันทีในการรันรอบที่สอง
+-- ---------------------------------------------------------------------------
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS interest_mode TEXT NOT NULL DEFAULT 'per_installment'
+  CHECK (interest_mode IN ('per_installment','flat_total'));
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS interest_rate_bp INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS total_due BIGINT NOT NULL DEFAULT 0;
 
 -- ---------------------------------------------------------------------------
 -- ความปลอดภัยระดับแถว (Row Level Security)

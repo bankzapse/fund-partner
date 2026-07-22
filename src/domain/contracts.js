@@ -32,6 +32,79 @@ export class BusinessError extends Error {
  * - รายวัน 24 งวด / รายเดือน : แต่ละงวดตัดดอกเบี้ยคงที่ ส่วนที่เหลือตัดเงินต้น
  * - ดอกลอย                    : แต่ละรอบจ่ายเฉพาะดอกเบี้ย เงินต้นคงเดิม
  */
+/**
+ * กระจายจำนวนเงินก้อนหนึ่งลง n งวด โดยผลรวมตรงเป๊ะเสมอ
+ *
+ * ใช้วิธี "ปัดแบบสะสม" คือคำนวณยอดสะสมถึงงวดที่ k แล้วลบยอดสะสมของงวดก่อนหน้า
+ * ผลรวมจึงเท่ากับยอดตั้งต้นเสมอโดยไม่ต้องตามเก็บเศษทีหลัง
+ *
+ * จำเป็นเพราะถ้าผลรวมเงินต้นรายงวดต่างจากเงินต้นตามสัญญาแม้แต่สตางค์เดียว
+ * สัญญาจะปิดเป็น "ครบสัญญา" ไม่ได้เลยและค้างเป็นหนี้ค้างในรายงานตลอดไป
+ */
+function spreadExact(total, weights) {
+  const sumW = weights.reduce((a, b) => a + b, 0);
+  const out = [];
+  let cumW = 0, cumOut = 0;
+  for (const w of weights) {
+    cumW += w;
+    const target = Math.round((total * cumW) / sumW);
+    out.push(target - cumOut);
+    cumOut = target;
+  }
+  return out;
+}
+
+/**
+ * ตารางงวดแบบ "ดอกเหมารวมคงที่ต่อสัญญา"
+ *
+ * ยอดหนี้รวม = เงินต้น + ดอก โดยดอกคิดเป็น % ของเงินต้นครั้งเดียวตอนทำสัญญา
+ * เช่น กู้ 2,000 ดอก 20% => ดอก 400 ยอดรวม 2,400 จำนวน 24 งวด งวดละ 100
+ *
+ * ค่างวดปัดเป็นบาทถ้วน เพราะพนักงานเก็บเงินสดหน้างานจริง
+ * ถ้าเก็บเป็นเศษสตางค์ พนักงานจะปัดเอง แล้วยอดในระบบกับเงินสดจริงจะไม่ตรงกัน
+ * เศษที่เหลือทั้งหมดไปรวมที่งวดสุดท้าย
+ */
+export function buildFlatSchedule({ type, startDate, numInstallments, principalAmount, interestRateBp }) {
+  const unit = CONTRACT_TYPES[type].unit;
+  const n = numInstallments;
+  // ปัดดอกเบี้ยเป็น "บาทถ้วน" ไม่ใช่แค่สตางค์
+  //
+  // ถ้าปัดเป็นสตางค์ ยอดหนี้รวมจะมีเศษสตางค์ได้ (เช่น 3,333 บาท ดอก 15% = 499.95)
+  // แล้วงวดสุดท้ายจะกลายเป็นเศษสตางค์ตามไปด้วย ซึ่งพนักงานเก็บเงินสดหน้างานไม่ได้
+  // พอเก็บไม่ครบแม้แต่สตางค์เดียว เงินต้นคงเหลือจะไม่เป็น 0
+  // สัญญาจึงปิดเป็น "ครบสัญญา" ไม่ได้ตลอดไป และรียอดออกก็ไม่ได้
+  // สำรวจแล้วพบว่าเกิดกับเงินต้นบาทถ้วนถึง 80–95% ของกรณีจริง ไม่ใช่กรณีหายาก
+  const interestTotal = Math.round((principalAmount * interestRateBp) / 10000 / 100) * 100;
+  const totalDue = principalAmount + interestTotal;
+
+  // ค่างวดเป็นบาทถ้วน (100 สตางค์) เศษไปงวดสุดท้าย
+  const per = Math.floor(totalDue / n / 100) * 100;
+  // ถ้าค่างวดปัดแล้วเหลือ 0 แปลว่าเงินต้นน้อยเกินไปเมื่อเทียบกับจำนวนงวด
+  // ปล่อยผ่านจะได้ตารางที่หลายงวดเป็น 0 บาทแล้วไปกองที่งวดสุดท้าย ซึ่งใช้งานจริงไม่ได้
+  // โยนออกตรงนี้ด้วย เผื่อมีคนเรียกฟังก์ชันนี้ตรง ๆ โดยไม่ผ่านด่านตรวจของ normalizeContractInput
+  if (per <= 0) {
+    throw new BusinessError('จำนวนงวดมากเกินไปจนค่างวดต่ำกว่า 1 บาท');
+  }
+  const dues = Array(n).fill(per);
+  dues[n - 1] = totalDue - per * (n - 1);
+
+  // แบ่งดอก/ต้นในแต่ละงวดตามสัดส่วนของค่างวด ผลรวมทั้งสองฝั่งจึงตรงเป๊ะ
+  const interests = spreadExact(interestTotal, dues);
+
+  const rows = dues.map((due, i) => ({
+    seq: i + 1,
+    due_date: unit === 'day' ? addDays(startDate, i) : addMonths(startDate, i),
+    interest_due: interests[i],
+    principal_due: due - interests[i],
+    due_amount: due,
+  }));
+
+  // คืนค่างวดจากแถวแรกของตารางจริง ไม่ใช่ค่า per ที่ปัดลงไว้
+  // เพราะกรณีมีงวดเดียว แถวนั้นคือทั้งยอด ซึ่งต่างจาก per
+  // ถ้าคืน per ไป ค่างวดที่บันทึกในสัญญาจะไม่ตรงกับที่ต้องเก็บจริง
+  return { rows, interestTotal, totalDue, installmentAmount: rows[0].due_amount };
+}
+
 export function buildSchedule({
   type,
   startDate,
@@ -72,9 +145,17 @@ export function buildSchedule({
 }
 
 /** สรุปตัวเลขให้ผู้ใช้ตรวจก่อนยืนยัน (ข้อ 7.1 "แสดงเงินที่ลูกค้าได้รับจริงก่อนยืนยัน") */
+/**
+ * สร้างตารางงวดตามโหมดของสัญญา — จุดเดียวที่ตัดสินใจว่าจะใช้สูตรไหน
+ * ทุกที่ที่ต้องการตารางงวดต้องเรียกผ่านตัวนี้ ไม่เรียก buildSchedule ตรง ๆ
+ */
+export function scheduleFor(p) {
+  return p.interestMode === 'flat_total' ? buildFlatSchedule(p).rows : buildSchedule(p);
+}
+
 export async function previewContract(input) {
   const p = await normalizeContractInput(input);
-  const schedule = buildSchedule(p);
+  const schedule = scheduleFor(p);
   const totalDue = schedule.reduce((s, r) => s + r.due_amount, 0);
   const totalInterest = schedule.reduce((s, r) => s + r.interest_due, 0);
   const totalPrincipalScheduled = schedule.reduce((s, r) => s + r.principal_due, 0);
@@ -85,15 +166,39 @@ export async function previewContract(input) {
   const cashToCustomer = Math.max(0, grossOut - docFee - firstInst);
 
   const warnings = [];
-  if (p.type !== 'floating' && totalPrincipalScheduled < p.principalAmount) {
+  // โหมดดอกเหมารวมกระจายเงินต้นครบเสมอโดยการออกแบบ จึงไม่ต้องเตือนสองข้อนี้
+  const legacyMode = p.interestMode !== 'flat_total';
+  if (legacyMode && p.type !== 'floating' && totalPrincipalScheduled < p.principalAmount) {
     warnings.push(
       `ตารางงวดตัดเงินต้นรวม ${formatBaht(totalPrincipalScheduled)} บาท ` +
         `น้อยกว่าเงินต้นตามสัญญา ${formatBaht(p.principalAmount)} บาท ` +
         `จะเหลือเงินต้นค้าง ${formatBaht(p.principalAmount - totalPrincipalScheduled)} บาท เมื่อครบงวด (ต้องรียอดหรือชำระเพิ่ม)`,
     );
   }
-  if (p.type !== 'floating' && p.installmentAmount <= p.interestPerInst) {
+  if (legacyMode && p.type !== 'floating' && p.installmentAmount <= p.interestPerInst) {
     warnings.push('ค่างวดต้องมากกว่าดอกเบี้ยต่องวด มิฉะนั้นเงินต้นจะไม่ลดเลย');
+  }
+  // หักงวดแรกมากกว่าเงินที่ปล่อยจริง = บันทึกรับเงินสดที่ไม่มีอยู่จริง
+  // เกิดได้ในโหมดเหมารวมเพราะผู้ใช้ไม่ได้กรอกค่างวดเอง ระบบคำนวณให้จากอัตรา %
+  // จึงมองไม่เห็นว่ากำลังหักเกิน ต่างจากโหมดเดิมที่กรอกค่างวดเองแล้วเห็นตัวเลข
+  if (p.deductFirst && firstInst + docFee > grossOut) {
+    warnings.push(
+      `งวดแรกที่หัก ${formatBaht(firstInst)} บาท รวมค่าทำเอกสาร ${formatBaht(docFee)} บาท ` +
+        `มากกว่าเงินที่จ่ายออกจริง ${formatBaht(grossOut)} บาท — ` +
+        `ตรวจว่าตั้งใจหรือไม่ ถ้าไม่ ให้ปิดการหักงวดแรกหรือลดจำนวนงวดลง`,
+    );
+  }
+
+  // งวดสุดท้ายไม่เท่างวดอื่นเพราะรับเศษไว้ ต้องบอกให้เห็นก่อนยืนยัน
+  // ไม่งั้นพนักงานจะไปเก็บผิดยอดในวันสุดท้าย
+  if (!legacyMode && schedule.length > 1) {
+    const last = schedule[schedule.length - 1].due_amount;
+    if (last !== schedule[0].due_amount) {
+      warnings.push(
+        `งวดสุดท้ายเป็น ${formatBaht(last)} บาท ไม่เท่างวดอื่นที่ ${formatBaht(schedule[0].due_amount)} บาท ` +
+          `เพราะยอดหนี้รวมหารด้วยจำนวนงวดไม่ลงตัว — ปรับเงินต้นหรือจำนวนงวดถ้าอยากให้เท่ากันทุกงวด`,
+      );
+    }
   }
 
   return {
@@ -120,8 +225,18 @@ async function normalizeContractInput(input) {
   if (!isDateStr(startDate)) throw new BusinessError('วันเริ่มสัญญาไม่ถูกต้อง');
 
   const principalAmount = assertPositive(input.principalAmount, 'เงินต้น');
-  const interestPerInst = assertNonNegative(input.interestPerInst, 'ดอกเบี้ยต่องวด');
-  let installmentAmount = assertNonNegative(input.installmentAmount, 'ค่างวด');
+
+  // อ่านโหมดก่อนตรวจค่าอื่น เพราะโหมดดอกเหมารวมผู้ใช้ไม่ได้กรอก
+  // ดอกต่องวดกับค่างวดมาเลย ระบบคำนวณให้เองจากอัตรา %
+  const interestMode = input.interestMode === 'flat_total' ? 'flat_total' : 'per_installment';
+  const flatMode = interestMode === 'flat_total';
+
+  let interestPerInst = flatMode
+    ? 0
+    : assertNonNegative(input.interestPerInst, 'ดอกเบี้ยต่องวด');
+  let installmentAmount = flatMode
+    ? 0
+    : assertNonNegative(input.installmentAmount, 'ค่างวด');
   let numInstallments = Number(input.numInstallments);
 
   if (type === 'daily24' && !numInstallments) numInstallments = 24;
@@ -129,6 +244,29 @@ async function normalizeContractInput(input) {
   if (!Number.isInteger(numInstallments) || numInstallments < 1 || numInstallments > 600) {
     throw new BusinessError('จำนวนงวดไม่ถูกต้อง');
   }
+
+  // โหมดดอกเหมารวม — คำนวณยอดหนี้รวมและค่างวดจากอัตรา % ก่อนถึงด่านตรวจค่างวด
+  let interestRateBp = 0;
+
+  if (flatMode) {
+    if (type === 'floating') {
+      throw new BusinessError('ดอกลอยยังไม่รองรับโหมดดอกเหมารวม');
+    }
+    interestRateBp = Math.round(Number(input.interestRateBp));
+    if (!Number.isInteger(interestRateBp) || interestRateBp < 0 || interestRateBp > 100000) {
+      throw new BusinessError('อัตราดอกเบี้ยไม่ถูกต้อง (0–1000%)');
+    }
+    const flat = buildFlatSchedule({
+      type, startDate, numInstallments, principalAmount, interestRateBp,
+    });
+    installmentAmount = flat.installmentAmount;
+    // เก็บดอกต่องวดไว้เป็นค่าอ้างอิงเท่านั้น ตารางงวดจริงใช้ค่าที่กระจายแล้วรายงวด
+    interestPerInst = flat.rows[0].interest_due;
+    if (installmentAmount <= 0) {
+      throw new BusinessError('จำนวนงวดมากเกินไปจนค่างวดต่ำกว่า 1 บาท');
+    }
+  }
+
   if (installmentAmount <= 0) throw new BusinessError('ค่างวดต้องมากกว่า 0');
 
   const docFee =
@@ -147,6 +285,8 @@ async function normalizeContractInput(input) {
     installmentAmount,
     interestPerInst,
     numInstallments,
+    interestMode,
+    interestRateBp,
     docFee,
     deductFirst,
     grossOut: input.grossOut,
@@ -188,11 +328,13 @@ export async function createContractInTx(input, ctx) {
     `INSERT INTO contracts
        (contract_no, debtor_id, employee_id, type, principal_amount, installment_amount,
         interest_per_inst, num_installments, period_unit, start_date, doc_fee,
-        first_inst_deducted, cash_disbursed, principal_remaining, status, note,
+        first_inst_deducted, cash_disbursed, principal_remaining,
+        interest_mode, interest_rate_bp, total_due, status, note,
         created_by, created_at, updated_at)
      VALUES
        (:no, :debtor, :emp, :type, :principal, :inst, :interest, :n, :unit, :start, :fee,
-        :first, :cash, :principal, 'active', :note, :uid, :now, :now)`,
+        :first, :cash, :principal,
+        :mode, :rate_bp, :total_due, 'active', :note, :uid, :now, :now)`,
     {
       no: contractNo,
       debtor: input.debtorId,
@@ -207,6 +349,9 @@ export async function createContractInTx(input, ctx) {
       fee: preview.doc_fee,
       first: preview.first_installment,
       cash: preview.cash_to_customer,
+      mode: preview.interestMode,
+      rate_bp: preview.interestRateBp,
+      total_due: preview.totals.total_due,
       note: preview.note,
       uid: ctx?.user?.id ?? null,
       now,
@@ -428,6 +573,9 @@ export async function reyod(input, ctx) {
         docFee: input.docFee,
         deductFirst: input.deductFirst,
         grossOut,
+        // สืบทอดโหมดคิดดอกและอัตราจากสัญญาเดิม (เหตุผลเดียวกับใน reyodPreview)
+        interestMode: input.interestMode ?? old.interest_mode ?? 'per_installment',
+        interestRateBp: input.interestRateBp ?? old.interest_rate_bp ?? 0,
         note: input.note ?? `รียอดจากสัญญา ${old.contract_no}`,
       },
       ctx,
@@ -492,6 +640,14 @@ export async function reyodPreview(input) {
   const basis = await getSetting('reyod_cash_basis');
   const grossOut = basis === 'full' ? carried + newMoney : newMoney;
 
+  // สืบทอดโหมดคิดดอกจากสัญญาเดิม ถ้าไม่ได้ระบุมาใหม่
+  //
+  // สำคัญมาก: ถ้าไม่สืบทอด สัญญาที่รียอดจากสัญญาโหมดดอกเหมารวม
+  // จะถอยกลับไปโหมดเดิมเงียบ ๆ แล้วเอา interest_per_inst ที่กระจายแล้ว
+  // (เช่น 16.67 บาท) ไปใช้เป็นดอกต่องวดของสัญญาใหม่ ซึ่งผิดทั้งยอดและเจตนา
+  const inheritedMode = input.interestMode ?? old.interest_mode ?? 'per_installment';
+  const inheritedRateBp = input.interestRateBp ?? old.interest_rate_bp ?? 0;
+
   const preview = await previewContract({
     debtorId: old.debtor_id,
     type: input.type ?? old.type,
@@ -503,6 +659,8 @@ export async function reyodPreview(input) {
     docFee: input.docFee,
     deductFirst: input.deductFirst,
     grossOut,
+    interestMode: inheritedMode,
+    interestRateBp: inheritedRateBp,
   });
 
   return {
