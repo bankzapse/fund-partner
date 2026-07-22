@@ -1,4 +1,4 @@
-import { all, get, run, insert, tx, DISBURSE_CATEGORY, CAPITAL_OUT_CATEGORY, CAPITAL_IN_CATEGORY } from '../db/index.js';
+import { all, get, run, insert, tx, DISBURSE_CATEGORY, CAPITAL_OUT_CATEGORY, CAPITAL_IN_CATEGORY, REYOD_INTEREST_CATEGORY } from '../db/index.js';
 import { today, nowISO, monthRange, yearRange, addDays } from '../lib/time.js';
 import { audit } from '../lib/audit.js';
 
@@ -35,14 +35,17 @@ export async function financeSummary({ from, to, employeeId = null }) {
     `SELECT
        COALESCE(SUM(CASE WHEN i.category = 'doc_fee' THEN i.amount ELSE 0 END), 0) AS doc_fee_income,
        COALESCE(SUM(CASE WHEN i.category = :capIn  THEN i.amount ELSE 0 END), 0) AS capital_in,
-       COALESCE(SUM(CASE WHEN i.category NOT IN ('doc_fee', :capIn) THEN i.amount ELSE 0 END), 0) AS other_income,
+       COALESCE(SUM(CASE WHEN i.category NOT IN ('doc_fee', :capIn, :reyodInt) THEN i.amount ELSE 0 END), 0) AS other_income,
+       -- ดอกที่รับรู้ตอนรียอดเป็นรายได้ทางบัญชี แต่ไม่มีเงินสดเคลื่อนไหวจริง
+       -- จึงต้องแยกออกมา ไม่นับรวมในกระแสเงินสด
+       COALESCE(SUM(CASE WHEN i.category = :reyodInt THEN i.amount ELSE 0 END), 0) AS reyod_interest_income,
        COALESCE(SUM(i.amount), 0) AS total_income_entries
      FROM income_entries i
      WHERE i.is_void = 0 AND i.entry_date BETWEEN :from AND :to
      ${employeeId ? `AND EXISTS (
        SELECT 1 FROM contracts c2 WHERE c2.id = i.contract_id AND c2.employee_id = :emp
      )` : ''}`,
-    { from, to, capIn: CAPITAL_IN_CATEGORY, emp: employeeId },
+    { from, to, capIn: CAPITAL_IN_CATEGORY, reyodInt: REYOD_INTEREST_CATEGORY, emp: employeeId },
   );
 
   const expP = get(
@@ -81,9 +84,15 @@ export async function financeSummary({ from, to, employeeId = null }) {
     payP, incomeP, expP, contractsP, outstandingP,
   ]);
 
-  const totalIn = pay.cash_from_debtors + income.total_income_entries;
+  // ดอกที่รับรู้ตอนรียอดไม่ใช่เงินสด — ลูกหนี้ไม่ได้จ่ายเงินเข้ามา
+  // เป็นแค่การบันทึกว่าดอกก้อนนั้นกลายเป็นส่วนหนึ่งของยอดหนี้สัญญาใหม่แล้ว
+  // ถ้านับรวมในกระแสเงินสด ยอดปิดวันจะขาดเท่ากับก้อนนี้ทุกครั้งที่มีการรียอด
+  const nonCashIncome = income.reyod_interest_income;
+  const totalIn = pay.cash_from_debtors + income.total_income_entries - nonCashIncome;
   const totalOut = exp.total_expense;
-  const realIncome = pay.interest_income + income.doc_fee_income + income.other_income;
+  // แต่ในเชิงกำไรต้องนับ ไม่งั้นดอกก้อนนี้จะหายจากรายงานตลอดกาล
+  const realIncome =
+    pay.interest_income + income.doc_fee_income + income.other_income + nonCashIncome;
   const netProfit = realIncome - exp.operating_expense;
 
   return {
@@ -92,6 +101,7 @@ export async function financeSummary({ from, to, employeeId = null }) {
     // กระแสเงินสด
     total_in: totalIn,
     total_out: totalOut,
+    reyod_interest_income: nonCashIncome,
     net_cash: totalIn - totalOut,
     // รายได้ / กำไร
     interest_income: pay.interest_income,

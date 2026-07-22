@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { all, get, run, insert, getAllSettings, DISBURSE_CATEGORY, CAPITAL_IN_CATEGORY, CAPITAL_OUT_CATEGORY } from '../db/index.js';
+import { all, get, run, insert, getAllSettings, DISBURSE_CATEGORY, CAPITAL_IN_CATEGORY, CAPITAL_OUT_CATEGORY, REYOD_INTEREST_CATEGORY } from '../db/index.js';
 import { nowISO, today } from '../lib/time.js';
 import { audit } from '../lib/audit.js';
 import { assertNonNegative } from '../lib/money.js';
@@ -140,6 +140,15 @@ router.post(
     const before = await get(`SELECT * FROM ${table} WHERE id = :id`, { id });
     if (!before) return res.status(404).json({ error: 'ไม่พบรายการ' });
     if (before.is_void) return res.status(400).json({ error: 'รายการนี้ถูกยกเลิกไปแล้ว' });
+    // รายการที่ระบบสร้างเองคู่กับสัญญา ห้ามยกเลิกเดี่ยว ๆ จากสมุดเงินสด
+    // ถ้ายกเลิกได้ ดอกที่รับรู้ตอนรียอดจะหายจากรายงานถาวร ทั้งที่หนี้ก้อนนั้นยังอยู่
+    // ต้องแก้ที่ต้นทางคือยกเลิกการรียอด ไม่ใช่ลบรายการบัญชีทิ้ง
+    if (before.category === REYOD_INTEREST_CATEGORY) {
+      return res.status(400).json({
+        error: 'รายการนี้ระบบสร้างขึ้นจากการรียอด ยกเลิกเดี่ยวไม่ได้ ' +
+               'เพราะจะทำให้ดอกเบี้ยก้อนนี้หายจากรายงานทั้งที่หนี้ยังอยู่',
+      });
+    }
     await assertDayOpen(before.entry_date, req.ctx.user);
 
     await run(`UPDATE ${table} SET is_void = 1, void_reason = :r WHERE id = :id`, { id, r: reason });

@@ -8,6 +8,7 @@ import {
   getSettingInt,
   getSetting,
   DISBURSE_CATEGORY,
+  REYOD_INTEREST_CATEGORY,
 } from '../db/index.js';
 import { assertNonNegative, assertPositive, formatBaht } from '../lib/money.js';
 import { today, nowISO, addDays, addMonths, isDateStr } from '../lib/time.js';
@@ -521,6 +522,68 @@ export async function contractSummary(contractId, asOfDate = today()) {
   };
 }
 
+/**
+ * ยอดหนี้รวมตามสัญญา — รองรับสัญญาที่สร้างก่อนมีคอลัมน์ total_due
+ *
+ * สัญญาเก่ามี total_due = 0 จึงต้องรวมจากตารางงวดแทน
+ * ห้ามคืน 0 เฉย ๆ ไม่งั้นการรียอดจะคำนวณยอดคงเหลือติดลบ
+ */
+export async function contractTotalDue(contract) {
+  if (contract.total_due > 0) return contract.total_due;
+  const row = await get(
+    `SELECT COALESCE(SUM(due_amount), 0) AS t FROM installments WHERE contract_id = :cid`,
+    { cid: contract.id },
+  );
+  return Number(row?.t ?? 0);
+}
+
+/**
+ * ยอดคงเหลือของสัญญา แยกตามวิธีคิดของแต่ละโหมด
+ *
+ * โหมดดอกเหมารวม (flat_total)
+ *   "ยอดคงเหลือสัญญาเดิม" = ยอดหนี้รวมตามสัญญา − ยอดชำระสะสมทั้งหมด
+ *   ยอดนี้มีทั้งเงินต้นและดอกเบี้ยเดิมรวมอยู่แล้ว จึงไม่เรียกว่า "เงินต้นคงเหลือ"
+ *   ตามที่ผู้ใช้กำหนด: ไม่ต้องตัดดอกเบี้ยที่ยังไม่ถึงงวดออก
+ *
+ * โหมดเดิม (per_installment)
+ *   ใช้เงินต้นคงเหลือเหมือนเดิม เพื่อไม่ให้สัญญาที่มีอยู่แล้วเปลี่ยนพฤติกรรม
+ */
+export async function contractOutstanding(contract) {
+  const paid = await get(
+    `SELECT COALESCE(SUM(amount_paid), 0) AS p, COALESCE(SUM(interest_amount), 0) AS i
+     FROM payments WHERE contract_id = :cid AND is_void = 0`,
+    { cid: contract.id },
+  );
+  const totalPaid = Number(paid?.p ?? 0);
+  const interestPaid = Number(paid?.i ?? 0);
+
+  if (contract.interest_mode !== 'flat_total') {
+    return {
+      mode: 'per_installment',
+      carry: contract.principal_remaining,
+      total_due: await contractTotalDue(contract),
+      total_paid: totalPaid,
+      principal_part: contract.principal_remaining,
+      interest_part: 0,
+    };
+  }
+
+  const totalDue = await contractTotalDue(contract);
+  const carry = Math.max(0, totalDue - totalPaid);
+  // แยกว่าในยอดที่ยกไปนั้นเป็นเงินต้นเท่าไร เป็นดอกที่ยังไม่ได้รับรู้เท่าไร
+  // ไม่ได้เอาไปใช้คำนวณยอดยก (ผู้ใช้กำหนดว่าไม่ต้องแยก) แต่ต้องรู้เพื่อให้บัญชีถูก
+  const interestTotal = Math.max(0, totalDue - contract.principal_amount);
+  const interestUnearned = Math.max(0, interestTotal - interestPaid);
+  return {
+    mode: 'flat_total',
+    carry,
+    total_due: totalDue,
+    total_paid: totalPaid,
+    principal_part: Math.max(0, carry - interestUnearned),
+    interest_part: Math.min(carry, interestUnearned),
+  };
+}
+
 /** ป้ายสถานะลูกหนี้จากพฤติกรรมการชำระ (ใช้ใน Dashboard ข้อ 5) */
 export async function contractBehaviour(contractId, asOfDate = today()) {
   const s = await contractSummary(contractId, asOfDate);
@@ -552,7 +615,8 @@ export async function reyod(input, ctx) {
     if (old.status !== 'active') throw new BusinessError('สัญญาเดิมถูกปิดไปแล้ว');
 
     const newMoney = assertNonNegative(input.newMoney ?? 0, 'เงินเพิ่มใหม่');
-    const carried = old.principal_remaining;
+    const out = await contractOutstanding(old);
+    const carried = out.carry;
     const newPrincipal = carried + newMoney;
     if (newPrincipal <= 0) throw new BusinessError('ยอดสัญญาใหม่ต้องมากกว่า 0');
 
@@ -588,14 +652,41 @@ export async function reyod(input, ctx) {
        WHERE id = :id`,
       { id: old.id, now },
     );
+    // รับรู้ดอกเบี้ยเดิมที่ยังไม่ได้รับรู้ เป็นรายได้ ณ วันที่รียอด
+    //
+    // จำเป็นเพราะยอดที่ยกไปกลายเป็น "เงินต้น" ของสัญญาใหม่ตามที่ผู้ใช้กำหนด
+    // ถ้าไม่รับรู้ตรงนี้ ดอกก้อนนี้จะหายไปจากรายงานกำไรตลอดกาล
+    // (เงินต้นรับคืนไม่นับเป็นรายได้ตาม SRS ข้อ 14)
+    if (out.interest_part > 0) {
+      await run(
+        `INSERT INTO income_entries
+           (entry_date, category, amount, description, contract_id, debtor_id, created_by, created_at)
+         VALUES (:d, :cat, :amt, :desc, :cid, :did, :uid, :now)`,
+        {
+          // ใช้วันเริ่มสัญญาใหม่ ไม่ใช่วันนี้ ไม่งั้นการรียอดย้อนหลัง
+          // จะแตกเป็นสองวัน คนละงวดบัญชีกับรายการอื่นของการรียอดเดียวกัน
+          d: created.contract.start_date,
+          cat: REYOD_INTEREST_CATEGORY,
+          amt: out.interest_part,
+          desc: `ดอกเบี้ยคงเหลือจากสัญญา ${old.contract_no} ที่ยกไปเป็นยอดตั้งต้นสัญญาใหม่`,
+          cid: old.id,
+          did: old.debtor_id,
+          uid: ctx?.user?.id ?? null,
+          now,
+        },
+      );
+    }
+
     await run(
       `INSERT INTO contract_links
-         (from_contract_id, to_contract_id, link_type, carried_principal, new_money, created_by, created_at)
-       VALUES (:from, :to, 'reyod', :carried, :new, :uid, :now)`,
+         (from_contract_id, to_contract_id, link_type, carried_principal, carried_interest,
+          new_money, created_by, created_at)
+       VALUES (:from, :to, 'reyod', :carriedPrincipal, :carriedInterest, :new, :uid, :now)`,
       {
         from: old.id,
         to: created.contract.id,
-        carried,
+        carriedPrincipal: out.principal_part,
+        carriedInterest: out.interest_part,
         new: newMoney,
         uid: ctx?.user?.id ?? null,
         now,
@@ -624,6 +715,11 @@ export async function reyod(input, ctx) {
       old_contract: await getContract(old.id),
       new_contract: created.contract,
       preview: created.preview,
+      // ยอดที่ยกไปมีทั้งเงินต้นและดอกเบี้ยเดิมรวมอยู่ จึงเรียกว่ายอดคงเหลือสัญญาเดิม
+      carried_outstanding: carried,
+      carried_principal_part: out.principal_part,
+      carried_interest_part: out.interest_part,
+      // ชื่อเดิม เก็บไว้ไม่ให้หน้าจอเก่าพัง
       carried_principal: carried,
       new_money: newMoney,
     };
@@ -636,7 +732,8 @@ export async function reyodPreview(input) {
   if (!old) throw new BusinessError('ไม่พบสัญญาเดิม');
   const summary = await contractSummary(old.id);
   const newMoney = assertNonNegative(input.newMoney ?? 0, 'เงินเพิ่มใหม่');
-  const carried = old.principal_remaining;
+  const out = await contractOutstanding(old);
+  const carried = out.carry;
   const basis = await getSetting('reyod_cash_basis');
   const grossOut = basis === 'full' ? carried + newMoney : newMoney;
 
@@ -666,8 +763,16 @@ export async function reyodPreview(input) {
   return {
     old_contract: old,
     old_summary: summary,
+    // ชื่อนี้สำคัญ: ยอดที่ยกไปมีทั้งเงินต้นและดอกเบี้ยเดิมรวมอยู่แล้ว
+    // จึงไม่ใช่ "เงินต้นคงเหลือ" ตามที่ผู้ใช้ระบุไว้ชัดเจน
+    carried_outstanding: carried,
+    outstanding_detail: out,
+    // เก็บชื่อเดิมไว้ด้วยเพื่อไม่ให้หน้าจอเก่าพัง
     carried_principal: carried,
-    principal_paid_before: old.principal_amount - carried,
+    // โหมดเดิมแสดง "เงินต้นที่ตัดแล้ว" ส่วนโหมดเหมารวมแสดง "ชำระมาแล้วทั้งหมด"
+    // เพราะสองโหมดยกยอดคนละแบบ ตัวเลขที่มีความหมายจึงต่างกัน
+    principal_paid_before:
+      out.mode === 'flat_total' ? out.total_paid : old.principal_amount - out.carry,
     new_money: newMoney,
     cash_basis: basis,
     preview,

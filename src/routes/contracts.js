@@ -31,7 +31,15 @@ router.get(
     const status = req.query.status ? String(req.query.status) : null;
     const rows = await all(
       `SELECT c.*, d.full_name AS debtor_name, d.code AS debtor_code, d.phone AS debtor_phone,
-              e.full_name AS employee_name
+              e.full_name AS employee_name,
+              -- ยอดคงเหลือที่ใช้ตอนรียอด ขึ้นกับโหมดคิดดอกของสัญญา
+              -- โหมดเหมารวม: ยอดหนี้รวม − ยอดชำระสะสม (มีดอกเดิมรวมอยู่ด้วย)
+              -- โหมดเดิม: เงินต้นคงเหลือเหมือนเดิม
+              CASE WHEN c.interest_mode = 'flat_total' AND c.total_due > 0
+                   THEN GREATEST(0, c.total_due - COALESCE(
+                          (SELECT SUM(p.amount_paid) FROM payments p
+                            WHERE p.contract_id = c.id AND p.is_void = 0), 0))
+                   ELSE c.principal_remaining END AS outstanding
        FROM contracts c
        JOIN debtors d ON d.id = c.debtor_id
        LEFT JOIN employees e ON e.id = c.employee_id

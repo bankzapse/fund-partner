@@ -302,6 +302,9 @@ ALTER TABLE contracts ADD COLUMN IF NOT EXISTS interest_mode TEXT NOT NULL DEFAU
   CHECK (interest_mode IN ('per_installment','flat_total'));
 ALTER TABLE contracts ADD COLUMN IF NOT EXISTS interest_rate_bp INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE contracts ADD COLUMN IF NOT EXISTS total_due BIGINT NOT NULL DEFAULT 0;
+-- ในยอดที่ยกไปตอนรียอด มีดอกเบี้ยเดิมที่ยังไม่ได้รับรู้ปนอยู่เท่าไร
+-- เก็บไว้เพื่อตรวจสอบย้อนหลังได้ว่ารายได้ที่รับรู้ตอนรียอดมาจากไหน
+ALTER TABLE contract_links ADD COLUMN IF NOT EXISTS carried_interest BIGINT NOT NULL DEFAULT 0;
 
 -- ---------------------------------------------------------------------------
 -- ความปลอดภัยระดับแถว (Row Level Security)
