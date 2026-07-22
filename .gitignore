@@ -6,3 +6,9 @@ backups/
 .DS_Store
 setup-report.txt
 reports/
+
+# ไฟล์ตัวแปรสภาพแวดล้อมในเครื่อง — มีความลับ ห้ามขึ้น git เด็ดขาด
+# Vercel CLI สร้าง .env.local ให้อัตโนมัติเวลารันคำสั่ง จึงต้องกันไว้ล่วงหน้า
+.env
+.env.*
+!.env.example
