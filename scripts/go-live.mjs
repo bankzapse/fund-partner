@@ -9,7 +9,7 @@
 // 4) ลบทั้งหมดใน transaction เดียว ถ้าพลาดกลางคันจะย้อนกลับทั้งก้อน
 
 import { createInterface } from 'node:readline';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { stdin, stdout } from 'node:process';
 import bcrypt from 'bcryptjs';
 import pg from 'pg';
@@ -172,6 +172,42 @@ export function diagnose(url, err) {
   info('ลองรัน bash scripts/check-connection.sh เพื่อดูรายละเอียดเพิ่ม');
 }
 
+/** สร้างผู้ใช้ 1 คน พร้อมข้อมูลพนักงานถ้าเป็นพนักงานเก็บเงิน (ใช้ทั้งแบบไฟล์และแบบพิมพ์สด) */
+async function createUser(pool, { full_name, username, role, password, phone = null, area = null }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const now = nowISO();
+    const u = await client.query(
+      `INSERT INTO users (username, password_hash, full_name, role, is_active, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,1,$5,$5) RETURNING id`,
+      [username, bcrypt.hashSync(password, 10), full_name, role, now],
+    );
+    let empCode = null;
+    if (role === 'collector') {
+      // หารหัสถัดไปจากที่มีจริง กันชนกับข้อมูลที่นำเข้าภายหลัง
+      const max = await client.query(
+        `SELECT coalesce(max(substring(code from 2)::int), 0) n FROM employees WHERE code ~ '^E[0-9]+$'`,
+      );
+      empCode = 'E' + String(max.rows[0].n + 1).padStart(4, '0');
+      await client.query(
+        `INSERT INTO employees (user_id, code, full_name, phone, area, is_active, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,1,$6,$6)`,
+        [u.rows[0].id, empCode, full_name, phone, area, now],
+      );
+    }
+    await client.query('COMMIT');
+    ok(`สร้าง ${username} (${role}) แล้ว${empCode ? ` · รหัสพนักงาน ${empCode}` : ''}`);
+    return { username, full_name, role, empCode };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    bad(`สร้าง ${username} ไม่สำเร็จ: ${err.message}`);
+    return null;
+  } finally {
+    client.release();
+  }
+}
+
 async function main() {
   say();
   say(C.head('▸ เตรียมฐานข้อมูลจริงก่อนเปิดใช้งาน'));
@@ -179,8 +215,12 @@ async function main() {
   say(C.dim('  สคริปต์นี้ทำงานในเครื่องคุณเท่านั้น รหัสผ่านที่พิมพ์ไม่ถูกส่งไปไหน'));
   say();
 
-  const DB_URL = await askHidden('  วาง connection string ของ Supabase (จะไม่ขึ้นบนจอ): ');
+  // รับจากตัวแปรสภาพแวดล้อมได้ เพื่อไม่ต้องวางซ้ำถ้าเพิ่งตรวจด้วยสคริปต์อื่นมา
+  //   DATABASE_URL='...' bash scripts/go-live.sh
+  const DB_URL = process.env.DATABASE_URL
+    || await askHidden('  วาง connection string ของ Supabase (จะไม่ขึ้นบนจอ): ');
   if (!DB_URL) { bad('ไม่ได้ใส่อะไรมา'); closeRl(); process.exit(1); }
+  if (process.env.DATABASE_URL) ok('ใช้ค่าจากตัวแปรสภาพแวดล้อม');
 
   const pool = new pg.Pool({
     connectionString: DB_URL,
@@ -355,6 +395,56 @@ async function main() {
   say();
 
   const created = [];
+
+  // โหลดรายชื่อจากไฟล์ได้ เพื่อไม่ต้องพิมพ์ทีละคนทีละช่อง
+  //   bash scripts/go-live.sh --staff=staff.json
+  // ไฟล์เก็บแค่ชื่อ ตำแหน่ง เบอร์ พื้นที่ — รหัสผ่านยังพิมพ์สดทีละคน
+  // เพื่อไม่ให้รหัสผ่านค้างอยู่ในไฟล์บนดิสก์
+  const staffArg = process.argv.find((a) => a.startsWith('--staff='));
+  if (staffArg) {
+    const path = staffArg.split('=')[1];
+    let list;
+    try {
+      list = JSON.parse(readFileSync(path, 'utf8'));
+      if (!Array.isArray(list)) throw new Error('ไฟล์ต้องเป็นรายการ (array)');
+    } catch (err) {
+      bad(`อ่านไฟล์รายชื่อไม่ได้: ${err.message}`);
+      await pool.end(); closeRl(); process.exit(1);
+    }
+    info(`อ่านรายชื่อจากไฟล์ได้ ${list.length} คน — จะถามเฉพาะรหัสผ่านทีละคน`);
+    say();
+    for (const person of list) {
+      const role = ROLES[String(person.role)]?.role
+        ?? (['owner', 'manager', 'collector', 'accountant'].includes(person.role) ? person.role : null);
+      if (!person.full_name || !person.username || !role) {
+        bad(`ข้ามรายการที่ข้อมูลไม่ครบ: ${JSON.stringify(person)}`);
+        continue;
+      }
+      const dup = await pool.query('SELECT 1 FROM users WHERE username = $1', [person.username]);
+      if (dup.rowCount) { bad(`มีชื่อผู้ใช้ ${person.username} อยู่แล้ว ข้าม`); continue; }
+
+      say(`  ${person.full_name} (${person.username} · ${ROLES[Object.keys(ROLES).find((k) => ROLES[k].role === role)].label.split(' —')[0]})`);
+      let password;
+      for (;;) {
+        const p1 = await askHidden('    รหัสผ่าน (อย่างน้อย 8 ตัว): ');
+        if (p1.length < 8) { bad('สั้นเกินไป'); continue; }
+        const p2 = await askHidden('    พิมพ์อีกครั้ง: ');
+        if (p1 !== p2) { bad('ไม่ตรงกัน ลองใหม่'); continue; }
+        password = p1; break;
+      }
+      const made = await createUser(pool, {
+        full_name: person.full_name,
+        username: person.username,
+        role,
+        password,
+        phone: person.phone ?? null,
+        area: person.area ?? null,
+      });
+      if (made) created.push(made);
+      say();
+    }
+  }
+
   for (;;) {
     const more = await ask(`  เพิ่มผู้ใช้${created.length ? 'อีก' : ''}คนหนึ่งไหม (y = เพิ่ม / Enter = พอแล้ว): `);
     if (more.toLowerCase() !== 'y') break;
@@ -389,37 +479,8 @@ async function main() {
       area = (await ask('    พื้นที่ / เส้นทางที่ดูแล (Enter = ข้าม): ')) || null;
     }
 
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const now = nowISO();
-      const u = await client.query(
-        `INSERT INTO users (username, password_hash, full_name, role, is_active, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,1,$5,$5) RETURNING id`,
-        [username, bcrypt.hashSync(password, 10), full_name, role, now],
-      );
-      let empCode = null;
-      if (role === 'collector') {
-        // หารหัสพนักงานถัดไปจากที่มีอยู่จริง กันรหัสชนกับข้อมูลที่นำเข้ามาภายหลัง
-        const max = await client.query(
-          `SELECT coalesce(max(substring(code from 2)::int), 0) n FROM employees WHERE code ~ '^E[0-9]+$'`,
-        );
-        empCode = 'E' + String(max.rows[0].n + 1).padStart(4, '0');
-        await client.query(
-          `INSERT INTO employees (user_id, code, full_name, phone, area, is_active, created_at, updated_at)
-           VALUES ($1,$2,$3,$4,$5,1,$6,$6)`,
-          [u.rows[0].id, empCode, full_name, phone, area, now],
-        );
-      }
-      await client.query('COMMIT');
-      ok(`สร้าง ${username} (${role}) แล้ว${empCode ? ` · รหัสพนักงาน ${empCode}` : ''}`);
-      created.push({ username, full_name, role, empCode });
-    } catch (err) {
-      await client.query('ROLLBACK');
-      bad('สร้างไม่สำเร็จ: ' + err.message);
-    } finally {
-      client.release();
-    }
+    const made = await createUser(pool, { full_name, username, role, password, phone, area });
+    if (made) created.push(made);
     say();
   }
 

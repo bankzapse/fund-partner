@@ -1,0 +1,15 @@
+[
+  {
+    "full_name": "ชื่อ-นามสกุลจริง",
+    "username": "ชื่อผู้ใช้ภาษาอังกฤษ",
+    "role": "owner",
+    "_role_options": "owner = เจ้าของ · manager = ผู้จัดการ · collector = พนักงานเก็บเงิน · accountant = บัญชี"
+  },
+  {
+    "full_name": "ชื่อพนักงานเก็บเงิน",
+    "username": "collector1",
+    "role": "collector",
+    "phone": "081-234-5678",
+    "area": "สายเหนือ"
+  }
+]
