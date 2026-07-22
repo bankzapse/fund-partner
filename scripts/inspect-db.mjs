@@ -82,6 +82,38 @@ async function main() {
       || (host.match(/^db\.([a-z0-9]+)\./)?.[1] ?? '(ไม่ทราบ)');
   } catch { /* ปล่อยผ่าน */ }
 
+  // แสดงรายละเอียดที่อ่านได้จาก connection string ก่อนลองต่อ
+  // เพื่อให้เห็นทันทีว่าส่วนไหนเพี้ยน โดยไม่ต้องเดาจากข้อความ error
+  try {
+    const u = new URL(DB_URL);
+    const user = decodeURIComponent(u.username ?? '');
+    const shared = /pooler\.supabase\.com$/.test(u.hostname);
+    const line = (label, value, good) =>
+      say(`     ${label.padEnd(12)} ${value}${good === undefined ? '' : good ? C.ok('  ✓') : C.bad('  ✗')}`);
+
+    say(C.head('  ค่าที่อ่านได้จาก connection string'));
+    say();
+    line('โฮสต์', u.hostname, shared);
+    line('พอร์ต', u.port || '(ไม่ระบุ)', u.port === '6543');
+    // Shared pooler ต้องใช้ชื่อผู้ใช้แบบ postgres.รหัสโปรเจกต์
+    // ถ้าเป็น postgres เฉย ๆ แปลว่าคัดลอกมาจาก Direct connection
+    // หรือรหัสผ่านมีอักขระที่ทำให้ตัว URL ถูกอ่านผิดตำแหน่ง
+    line('ผู้ใช้', user, !shared || user.includes('.'));
+    line('ฐานข้อมูล', u.pathname.replace(/^\//, ''));
+    line('รหัสผ่าน', `${decodeURIComponent(u.password ?? '').length} ตัวอักษร`);
+    if (shared && !user.includes('.')) {
+      say();
+      bad('ชื่อผู้ใช้ต้องเป็น postgres.รหัสโปรเจกต์ เมื่อใช้ Shared pooler');
+      info('ถ้าคัดลอกมาถูกแล้ว มักเกิดจากรหัสผ่านมีอักขระพิเศษที่ยังไม่ได้แปลง');
+      info('ทำให้ตัวอ่าน URL ตัดข้อความผิดตำแหน่ง — แปลง @ เป็น %40 · # เป็น %23');
+    }
+    say();
+  } catch {
+    bad('อ่าน connection string ไม่ออก — มักเกิดจากอักขระพิเศษในรหัสผ่าน');
+    info('แปลง @ เป็น %40 · # เป็น %23 · / เป็น %2F · : เป็น %3A');
+    process.exit(1);
+  }
+
   const pool = new pg.Pool({
     connectionString: DB_URL,
     ssl: { rejectUnauthorized: false },
