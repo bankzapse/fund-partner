@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex, nofollow" />
+<title>เปรียบเทียบฟอนต์ — พันธมิตรเงินทุน</title>
+
+<!-- โหลดฟอนต์จาก Google เฉพาะหน้าเปรียบเทียบนี้เท่านั้น
+     หน้าจริงของระบบจะเก็บไฟล์ฟอนต์ไว้บนเซิร์ฟเวอร์เราเอง ไม่เรียกออกไปข้างนอก -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;800&family=Noto+Sans+Thai:wght@400;600;800&family=Noto+Sans+Thai+Looped:wght@400;600;800&family=IBM+Plex+Sans+Thai:wght@400;600;700&family=Prompt:wght@400;600;800&family=Kanit:wght@400;600;800&family=Anuphan:wght@400;600;700&family=Bai+Jamjuree:wght@400;600;700&display=swap" rel="stylesheet" />
+
+<style>
+:root{
+  --navy:#0f2f4f; --gold:#d99b2b; --green:#17916b; --red:#c8412f;
+  --slate:#5b6b7c; --line:#e1e7ee; --bg:#f7f9fc; --text:#16232f;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,sans-serif}
+.wrap{max-width:1200px;margin:0 auto;padding:1.5rem 1.1rem 4rem}
+
+header{background:var(--navy);color:#fff;padding:1.6rem 0;margin-bottom:1.5rem}
+header .wrap{padding-bottom:0}
+header h1{margin:0 0 .4rem;font-size:1.5rem}
+header p{margin:0;opacity:.85;font-size:.95rem;line-height:1.6}
+
+.controls{
+  position:sticky;top:0;z-index:10;background:#fff;border:1px solid var(--line);
+  border-radius:14px;padding:.9rem 1.1rem;margin-bottom:1.4rem;
+  display:flex;flex-wrap:wrap;gap:1.2rem;align-items:center;
+  box-shadow:0 2px 12px rgba(16,35,55,.06)
+}
+.controls label{font-size:.9rem;font-weight:600;display:flex;align-items:center;gap:.5rem}
+.controls input[type=range]{width:150px}
+.hint{font-size:.85rem;color:var(--slate)}
+
+.card{
+  background:#fff;border:1px solid var(--line);border-radius:16px;
+  padding:1.3rem 1.4rem;margin-bottom:1.1rem;
+  box-shadow:0 1px 2px rgba(16,35,55,.05)
+}
+.card.pick{border-color:var(--gold);box-shadow:0 0 0 3px rgba(217,155,43,.15)}
+
+.fname{
+  display:flex;flex-wrap:wrap;align-items:baseline;gap:.6rem;
+  margin:0 0 1rem;padding-bottom:.7rem;border-bottom:1px dashed var(--line)
+}
+.fname b{font-size:1.05rem;font-family:system-ui,sans-serif}
+.fname .tag{
+  font:600 .74rem/1 system-ui,sans-serif;padding:.28rem .6rem;border-radius:999px;
+  background:#eef4fb;color:#1d4a75
+}
+.fname .tag.loop{background:#fdf3e3;color:#8a5f10}
+.fname .tag.now{background:#e7f6f0;color:var(--green)}
+
+/* ตัวอย่างการใช้งานจริง */
+.demo{display:grid;gap:1rem}
+@media(min-width:860px){.demo{grid-template-columns:190px 1fr}}
+
+.menu{background:#fff;border-right:1px solid var(--line);padding-right:.5rem}
+.menu div{padding:.5rem .7rem;border-radius:9px;color:var(--slate);font-weight:600}
+.menu div.on{background:var(--navy);color:#fff}
+
+.panel h2{margin:0 0 .3rem;font-size:1.35rem;font-weight:800;letter-spacing:0}
+.panel .sub{color:var(--slate);font-size:.9rem;margin:0 0 .9rem}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.6rem;margin-bottom:1rem}
+.stat{background:#f7f9fc;border:1px solid var(--line);border-radius:11px;padding:.6rem .75rem}
+.stat .l{font-size:.75rem;color:var(--slate)}
+.stat .v{font-size:1.2rem;font-weight:800;font-variant-numeric:tabular-nums}
+.stat .v.g{color:var(--green)}
+
+table{width:100%;border-collapse:collapse;font-size:.92rem}
+th{text-align:left;font-size:.78rem;color:var(--slate);font-weight:600;padding:.45rem .5rem;border-bottom:1px solid var(--line)}
+td{padding:.5rem;border-bottom:1px solid #f0f3f7}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+.badge{font-size:.75rem;font-weight:700;padding:.2rem .5rem;border-radius:999px;background:#e7f6f0;color:var(--green)}
+.badge.w{background:#fdf3e3;color:#8a5f10}
+
+.btnrow{display:flex;gap:.5rem;margin-top:.9rem;flex-wrap:wrap}
+.btn{
+  padding:.55rem 1.1rem;border-radius:999px;border:1px solid transparent;
+  background:var(--navy);color:#fff;font:inherit;font-weight:700;font-size:.9rem;cursor:pointer
+}
+.btn.ghost{background:#fff;color:var(--navy);border-color:var(--line)}
+.btn.gold{background:var(--gold);color:#33230a}
+
+.pangram{margin-top:.9rem;padding-top:.8rem;border-top:1px dashed var(--line);line-height:1.9}
+.pangram .sm{font-size:.82rem;color:var(--slate)}
+
+.choose{
+  margin-top:1rem;padding-top:.9rem;border-top:1px dashed var(--line);
+  display:flex;align-items:center;gap:.6rem;flex-wrap:wrap
+}
+.choose code{
+  background:#f2f5f9;padding:.3rem .6rem;border-radius:7px;
+  font-family:ui-monospace,monospace;font-size:.86rem
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <h1>เปรียบเทียบฟอนต์ภาษาไทย</h1>
+    <p>
+      ทุกบล็อกใช้ข้อความจริงจากระบบ เพื่อให้ตัดสินใจจากของที่จะเห็นทุกวัน<br />
+      ดูตัวเลขเป็นพิเศษ เพราะระบบนี้แสดงจำนวนเงินตลอดเวลา — ตัวเลขควรกว้างเท่ากันทุกตัวเพื่อให้คอลัมน์ตรงกัน
+    </p>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="controls">
+    <label>ขนาดตัวอักษร
+      <input type="range" id="size" min="14" max="21" step="0.5" value="17" />
+      <span id="sizeval" class="hint">17px</span>
+    </label>
+    <label><input type="checkbox" id="dense" /> ลองแบบตัวหนา</label>
+    <span class="hint">เลื่อนดูทีละแบบ แล้วบอกชื่อฟอนต์ที่ชอบ</span>
+  </div>
+
+  <div id="list"></div>
+
+</div>
+
+<script>
+const FONTS = [
+  { css:"'Sarabun'",             name:'Sarabun',              tags:['มีหัว','ใช้อยู่ตอนนี้'], note:'ฟอนต์มาตรฐานราชการไทย อ่านง่าย เป็นทางการ' },
+  { css:"'Noto Sans Thai'",      name:'Noto Sans Thai',       tags:['ไม่มีหัว'],  note:'ของ Google กลาง ๆ ไม่มีบุคลิกเด่น เหมาะกับงานข้อมูล' },
+  { css:"'Noto Sans Thai Looped'", name:'Noto Sans Thai Looped', tags:['มีหัว'], note:'แบบมีหัว อ่านง่ายสำหรับคนที่ชินกับฟอนต์ไทยดั้งเดิม' },
+  { css:"'IBM Plex Sans Thai'",  name:'IBM Plex Sans Thai',   tags:['ไม่มีหัว'],  note:'ทันสมัย เรียบ เหมาะกับหน้าจอที่มีตัวเลขเยอะ' },
+  { css:"'Prompt'",              name:'Prompt',               tags:['ไม่มีหัว'],  note:'เรขาคณิต ดูสะอาด นิยมในแอปไทยยุคใหม่' },
+  { css:"'Kanit'",               name:'Kanit',                tags:['ไม่มีหัว'],  note:'หนาแน่นกว่าเพื่อน ดูมีพลัง เหมาะกับหัวข้อ' },
+  { css:"'Anuphan'",             name:'Anuphan',              tags:['ไม่มีหัว'],  note:'ใหม่กว่า เส้นสม่ำเสมอ อ่านสบายตาในขนาดเล็ก' },
+  { css:"'Bai Jamjuree'",        name:'Bai Jamjuree',         tags:['ไม่มีหัว'],  note:'ตัวแคบกว่าเพื่อน ประหยัดพื้นที่แนวนอน' },
+];
+
+const tpl = (f) => `
+<div class="card" style="font-family:${f.css},sans-serif">
+  <p class="fname">
+    <b>${f.name}</b>
+    ${f.tags.map((t) => `<span class="tag ${t === 'มีหัว' ? 'loop' : ''}${t === 'ใช้อยู่ตอนนี้' ? 'now' : ''}">${t}</span>`).join('')}
+    <span class="hint">${f.note}</span>
+  </p>
+
+  <div class="demo">
+    <nav class="menu">
+      <div class="on">ภาพรวม</div>
+      <div>ลูกหนี้</div>
+      <div>รับชำระ</div>
+      <div>สัญญา</div>
+      <div>รียอด</div>
+      <div>รายรับ-รายจ่าย</div>
+      <div>รายงาน</div>
+    </nav>
+
+    <div class="panel">
+      <h2>ภาพรวมวันนี้</h2>
+      <p class="sub">ยอดคงเหลือและการเคลื่อนไหวล่าสุด ณ วันที่ 22 กรกฎาคม 2569</p>
+
+      <div class="stats">
+        <div class="stat"><div class="l">เงินทุนทั้งหมด</div><div class="v">1,284,500.00</div></div>
+        <div class="stat"><div class="l">เงินต้นคงเหลือในลูกหนี้</div><div class="v">862,000.00</div></div>
+        <div class="stat"><div class="l">เก็บได้วันนี้</div><div class="v g">18,450.00</div></div>
+        <div class="stat"><div class="l">กำไรสุทธิวันนี้</div><div class="v g">6,120.00</div></div>
+      </div>
+
+      <table>
+        <thead>
+          <tr><th>ลูกหนี้</th><th>เลขที่สัญญา</th><th class="num">จ่ายจริง</th><th class="num">ดอก</th><th class="num">ต้น</th><th>สถานะ</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>สมศรี ใจดี</td><td>CT-2607-0001</td><td class="num">3,000.00</td><td class="num">500.00</td><td class="num">2,500.00</td><td><span class="badge">เต็มงวด</span></td></tr>
+          <tr><td>มานะ อดทน</td><td>CT-2607-0014</td><td class="num">500.00</td><td class="num">500.00</td><td class="num">0.00</td><td><span class="badge w">เฉพาะดอก</span></td></tr>
+          <tr><td>ปรีชา ขยัน</td><td>CT-2606-0032</td><td class="num">12,000.00</td><td class="num">1,200.00</td><td class="num">10,800.00</td><td><span class="badge">เต็มงวด</span></td></tr>
+        </tbody>
+      </table>
+
+      <div class="btnrow">
+        <button class="btn">บันทึกการรับชำระ</button>
+        <button class="btn ghost">ยกเลิกรายการ</button>
+        <button class="btn gold">รียอดสัญญา</button>
+      </div>
+
+      <div class="pangram">
+        เป็นมนุษย์สุดประเสริฐเลิศคุณค่า กว่าบรรดาฝูงสัตว์เดรัจฉาน<br />
+        <span class="sm">ตัวเลขเรียงกัน 0123456789 · ฿1,234,567.89 · วันที่ 22/07/2569 · รหัส D00001 · E0001</span>
+      </div>
+
+      <div class="choose">
+        <span class="hint">ถ้าเลือกอันนี้ บอกผมว่า</span> <code>${f.name}</code>
+      </div>
+    </div>
+  </div>
+</div>`;
+
+document.getElementById('list').innerHTML = FONTS.map(tpl).join('');
+
+const size = document.getElementById('size');
+const sizeval = document.getElementById('sizeval');
+const dense = document.getElementById('dense');
+const apply = () => {
+  document.querySelectorAll('.card').forEach((c) => {
+    c.style.fontSize = size.value + 'px';
+    c.style.fontWeight = dense.checked ? '600' : '400';
+  });
+  sizeval.textContent = size.value + 'px';
+};
+size.addEventListener('input', apply);
+dense.addEventListener('change', apply);
+apply();
+</script>
+</body>
+</html>
