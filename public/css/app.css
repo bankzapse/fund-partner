@@ -164,7 +164,12 @@ h3 { line-height: 1.5; }
 .card > h3 + .hint { margin-top: -0.55rem; }
 .hint.mt { margin-top: 0.85rem; }
 
-.grid { display: grid; gap: 0.7rem; }
+/* บล็อกระดับหน้า (แถวสถิติ) ต้องเว้นระยะท้ายเท่ากับการ์ด
+   ไม่งั้นแถวสถิติจะติดกับหัวข้อหรือการ์ดที่อยู่ถัดไปแบบไม่มีช่องว่างเลย */
+.grid { display: grid; gap: 0.7rem; margin-bottom: 1rem; }
+/* ตารางย่อยที่อยู่ในการ์ดไม่ต้องเว้นท้าย เพราะการ์ดมี padding ของตัวเองแล้ว
+   ถ้าต้องการเว้นระหว่างตารางย่อยสองอัน ใช้คลาส .mt ตามที่ทำอยู่เดิม */
+.card .grid { margin-bottom: 0; }
 .grid.k2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .grid.k3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .grid.k4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
