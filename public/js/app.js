@@ -8,7 +8,7 @@ import { renderReyod } from './pages/reyod.js';
 import { renderCashbook } from './pages/cashbook.js';
 import { renderReports } from './pages/reports.js';
 import { renderEmployees } from './pages/employees.js';
-import { renderSettings } from './pages/settings.js';
+import { renderSettings, renderPricingAdmin } from './pages/settings.js';
 import { renderImport } from './pages/import.js';
 
 const app = document.getElementById('app');
@@ -29,6 +29,9 @@ const MENU = [
 
 const ROUTES = [
   ...MENU,
+  // หน้าแก้ราคาบนหน้าแนะนำระบบ — ไม่อยู่ในเมนูโดยตั้งใจ (อยู่นอกขอบเขต SRS)
+  // เข้าได้ที่ #/pricing สำหรับผู้ขายระบบเท่านั้น
+  { path: '/pricing', cap: 'settings_manage', render: renderPricingAdmin, skel: 'form' },
   { path: '/debtors/:id', cap: 'debtors_view', render: renderDebtorDetail, skel: 'detail' },
   { path: '/contracts/new', cap: 'contracts_create', render: renderNewContract, skel: 'form' },
   { path: '/contracts/:id', cap: 'debtors_view', render: renderContractDetail, skel: 'detail' },

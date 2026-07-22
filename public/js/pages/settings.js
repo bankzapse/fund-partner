@@ -17,7 +17,6 @@ export async function renderSettings() {
     state.settings = settings;
     clear(body).append(
       settingsCard(settings, load),
-      pricingCard(settings, load),
       approvalsCard(approvals.items, load),
       backupCard(backups.items, load),
       auditCard(audit.items),
@@ -106,6 +105,41 @@ function settingsCard(s, reload) {
  * เก็บเป็น JSON ในตารางการตั้งค่า แล้วเซิร์ฟเวอร์เอาไปเติมลงหน้าเว็บตอนมีคนเปิด
  * จึงไม่ต้องแก้โค้ดและไม่ต้อง deploy ใหม่เมื่อเปลี่ยนราคา
  */
+/**
+ * หน้าแก้ราคาบนหน้าแนะนำระบบ — เข้าได้ที่ #/pricing
+ *
+ * ไม่อยู่ในเมนูและไม่อยู่ในหน้าตั้งค่าโดยตั้งใจ
+ * เพราะราคาเป็นเรื่องของการ "ขายซอฟต์แวร์" ไม่ใช่การ "บริหารลูกหนี้"
+ * ซึ่งอยู่นอกขอบเขต SRS เจ้าของกิจการที่ซื้อระบบไปใช้ไม่ควรเห็นส่วนนี้
+ */
+export async function renderPricingAdmin() {
+  const { settings } = await api.get('/api/admin/settings');
+  const wrap = el('div', {});
+  const body = el('div', {});
+
+  const load = async () => {
+    const fresh = await api.get('/api/admin/settings');
+    clear(body).append(pricingCard(fresh.settings, load));
+  };
+
+  wrap.append(
+    el(
+      'div',
+      { class: 'page-head' },
+      el(
+        'div',
+        {},
+        el('h2', {}, 'ราคาบนหน้าแนะนำระบบ'),
+        el('div', { class: 'sub' }, 'หน้านี้ไม่อยู่ในเมนู ใช้สำหรับผู้ขายระบบเท่านั้น'),
+      ),
+      el('a', { href: '/', target: '_blank', class: 'btn ghost sm', style: 'text-decoration:none' }, 'เปิดดูหน้าเว็บ'),
+    ),
+    body,
+  );
+  clear(body).append(pricingCard(settings, load));
+  return wrap;
+}
+
 function pricingCard(s, reload) {
   let plans;
   try {
@@ -202,11 +236,9 @@ function pricingCard(s, reload) {
   return el(
     'div',
     { class: 'card' },
-    el('h3', {}, 'ราคาบนหน้าแนะนำระบบ'),
+    // ไม่ใส่หัวข้อซ้ำกับหัวหน้าเพจ ซึ่งเขียนไว้แล้วว่าหน้านี้คือหน้าอะไร
     el('div', { class: 'hint' },
-      'ราคาที่แสดงบนหน้าเว็บสาธารณะ ',
-      el('a', { href: '/', target: '_blank' }, 'เปิดดูหน้าเว็บ'),
-      ' — แก้แล้วกดบันทึก หน้าเว็บจะอัปเดตเองภายใน 5 นาที ไม่ต้องแก้โค้ด'),
+      'แก้แล้วกดบันทึก หน้าเว็บสาธารณะจะอัปเดตเองภายใน 5 นาที ไม่ต้องแก้โค้ดและไม่ต้อง deploy ใหม่'),
     el('div', { class: 'grid k2' },
       field('หัวข้อ', heading),
       field('คำโปรย', subheading)),
