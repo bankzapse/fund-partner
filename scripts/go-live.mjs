@@ -70,12 +70,22 @@ function askHidden(q) {
 
 const nowISO = () => new Date().toISOString();
 
-// ลำดับการลบต้องไล่จากตารางลูกไปหาตารางแม่ ไม่งั้นติด foreign key
-const CLEAR_ORDER = [
+// ตารางข้อมูลธุรกรรมที่ต้องล้างก่อนเปิดใช้งานจริง
+//
+// ล้างด้วย TRUNCATE ทุกตารางในคำสั่งเดียว ไม่ใช่ DELETE ทีละตารางตามลำดับ
+// เพราะการไล่ลำดับเองผิดพลาดง่ายมาก — ตารางเหล่านี้อ้างถึงกันไขว้ไปมา
+// เช่น expenses.contract_id และ income_entries.contract_id ชี้ไปที่ contracts
+// พอ TRUNCATE พร้อมกันในคำสั่งเดียว Postgres จะจัดลำดับให้เองอย่างถูกต้อง
+//
+// ปลอดภัยเพราะไม่มีตารางที่เก็บไว้ (users, employees, settings, counters)
+// อ้างถึงตารางในรายการนี้เลย ถ้ามีในอนาคต Postgres จะฟ้องแทนที่จะลบมั่ว
+const CLEAR_TABLES = [
   'payments', 'installments', 'contract_links', 'contracts',
   'debtor_documents', 'debtors', 'approvals', 'daily_closings',
   'income_entries', 'expenses', 'audit_logs', 'sessions', 'login_attempts',
 ];
+// ใช้ชื่อเดิมในที่อื่น ๆ ของไฟล์ที่อ้างถึงลำดับนี้เพื่อรายงานผล
+const CLEAR_ORDER = CLEAR_TABLES;
 const ALL_TABLES = [...new Set([...CLEAR_ORDER, 'employees', 'users', 'settings', 'counters'])];
 
 const ROLES = {
@@ -262,7 +272,12 @@ async function main() {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
-        for (const t of CLEAR_ORDER) await client.query(`DELETE FROM ${t}`);
+        // RESTART IDENTITY ให้เลขลำดับของแต่ละตารางเริ่มนับใหม่จาก 1
+        // เหมาะกับการเริ่มใช้งานจริง ข้อมูลจะได้ไม่มีช่องว่างของเลขที่ดูแปลก
+        await client.query(
+          `TRUNCATE ${CLEAR_TABLES.map((t) => `"${t}"`).join(', ')} RESTART IDENTITY`,
+        );
+        // counters เก็บเลขที่เอกสารล่าสุด ล้างเพื่อให้เริ่มนับใหม่จาก 1
         await client.query('DELETE FROM counters');
         await client.query('COMMIT');
         ok('ล้างเรียบร้อย');
