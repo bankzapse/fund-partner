@@ -398,6 +398,25 @@ input[type='file'] { padding: 0.45rem; font-size: 0.85rem; }
   display: flex; align-items: flex-end; justify-content: center;
   animation: fp-fade 0.14s ease-out;
 }
+/* สปินเนอร์ในปุ่ม — บอกว่ากำลังทำงานอยู่ */
+.spinner {
+  display: inline-block;
+  width: 1em; height: 1em;
+  margin-right: 0.55rem;
+  vertical-align: -0.15em;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: fp-spin 0.6s linear infinite;
+}
+@keyframes fp-spin { to { transform: rotate(360deg); } }
+/* ปุ่มตอนโหลด: จางลงเล็กน้อยแต่ยังอ่านออก และห้ามคลิก */
+.btn.loading { opacity: 0.9; cursor: progress; }
+/* ผู้ที่ตั้งค่าลดการเคลื่อนไหว ให้สปินเนอร์นิ่งแทนหมุน */
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; }
+}
+
 @keyframes fp-fade { from { opacity: 0; } to { opacity: 1; } }
 @media (min-width: 640px) { .modal-back { align-items: center; padding: 1rem; } }
 .modal {

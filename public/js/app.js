@@ -64,6 +64,18 @@ function renderLogin() {
   const username = el('input', { autocomplete: 'username', placeholder: 'ชื่อผู้ใช้' });
   const password = el('input', { type: 'password', autocomplete: 'current-password', placeholder: 'รหัสผ่าน' });
   const button = el('button', { class: 'btn block', type: 'submit' }, 'เข้าสู่ระบบ');
+  // สลับปุ่มเป็นสถานะกำลังโหลด — สปินเนอร์หมุน + เปลี่ยนข้อความ
+  // ปิดปุ่มไว้ด้วย กันกดซ้ำระหว่างรอ
+  const setLoading = (on) => {
+    button.disabled = on;
+    button.classList.toggle('loading', on);
+    clear(button);
+    if (on) {
+      button.append(el('span', { class: 'spinner', 'aria-hidden': 'true' }), 'กำลังเข้าสู่ระบบ…');
+    } else {
+      button.textContent = 'เข้าสู่ระบบ';
+    }
+  };
   // ข้อความแจ้งเตือนแบบค้างไว้ ไม่ใช้ toast ที่หายไปเอง เพราะกรณีถูกล็อก
   // ผู้ใช้ต้องอ่านได้ว่าต้องรออีกกี่นาที
   const notice = el('div', { class: 'warn', style: 'display:none' });
@@ -74,7 +86,7 @@ function renderLogin() {
       class: 'login-card',
       onsubmit: async (e) => {
         e.preventDefault();
-        button.disabled = true;
+        setLoading(true);
         notice.style.display = 'none';
         try {
           const data = await api.post('/api/auth/login', {
@@ -93,7 +105,7 @@ function renderLogin() {
           } else {
             toastError(err);
           }
-          button.disabled = false;
+          setLoading(false);
         }
       },
     },
