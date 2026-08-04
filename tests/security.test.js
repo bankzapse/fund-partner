@@ -348,4 +348,45 @@ describe('ความปลอดภัย: ไฟล์แนบ', () => {
     assert.ok(!path.includes('passwd'), 'ต้องไม่ใช้ชื่อไฟล์ที่ผู้ใช้ส่งมาเป็นชื่อจริง');
     assert.match(path, /^\/uploads\/debtor-\d+-\d+-[a-f0-9]+\.png$/);
   });
+
+  test('เปิดไฟล์แนบใต้ /uploads โดยไม่ล็อกอินไม่ได้ (กันสำเนาบัตร ปชช. หลุด)', async () => {
+    const r = await fetch(base + '/uploads/debtor-1-1-deadbeef.png');
+    assert.equal(r.status, 401, 'ไฟล์แนบต้องผ่านด่านล็อกอินก่อน');
+  });
+});
+
+describe('ความปลอดภัย: ช่องโหว่ที่แก้เพิ่มจากการตรวจแบบปฏิปักษ์', () => {
+  test('preview การชำระของสัญญาพนักงานอื่นไม่ได้ (IDOR)', async () => {
+    const r = await api('collector', 'POST', '/api/payments/preview',
+      { contract_id: contractA, amount_paid: 5000 });
+    assert.equal(r.status, 403, 'ต้องกัน preview สัญญาข้ามเขต');
+  });
+
+  test('พนักงานเก็บเงินเรียกรายชื่อพนักงาน/ตั้งค่า/คำขออนุมัติ (GET) ไม่ได้', async () => {
+    for (const p of ['/api/admin/employees', '/api/admin/settings', '/api/admin/approvals']) {
+      const r = await api('collector', 'GET', p);
+      assert.equal(r.status, 403, `${p} ต้องเป็น 403 แต่ได้ ${r.status}`);
+    }
+  });
+
+  test('ทุก response มี Content-Security-Policy และไม่มี x-powered-by', async () => {
+    const r = await fetch(base + '/api/me', { headers: { Cookie: `fp_session=${sess.owner}` } });
+    assert.ok(r.headers.get('content-security-policy'), 'ต้องมี CSP');
+    assert.match(r.headers.get('content-security-policy'), /default-src 'self'/);
+    assert.equal(r.headers.get('x-powered-by'), null, 'ต้องไม่บอกว่าใช้ Express');
+    assert.equal(r.headers.get('x-content-type-options'), 'nosniff');
+  });
+
+  test('CSV export ไม่ให้ค่าที่ขึ้นต้นด้วย = + - @ กลายเป็นสูตร Excel', async () => {
+    // สร้างลูกหนี้ชื่อขึ้นต้นด้วย = แล้วส่งออก CSV รายชื่อลูกหนี้
+    await api('owner', 'POST', '/api/debtors', { full_name: '=SUM(1+1)*cmd|calc' });
+    const r = await fetch(base + '/api/debtors/export', {
+      headers: { Cookie: `fp_session=${sess.owner}` },
+    });
+    const text = await r.text();
+    assert.equal(r.status, 200);
+    assert.ok(text.includes('SUM(1+1)'), 'ต้องมีลูกหนี้ที่เพิ่งสร้างในไฟล์');
+    assert.ok(!/(^|,)=SUM\(1\+1\)/m.test(text),
+      'ค่าที่ขึ้นต้นด้วย = ต้องไม่โผล่แบบดิบ ๆ (ต้องถูกนำหน้าด้วย \' กัน formula injection)');
+  });
 });

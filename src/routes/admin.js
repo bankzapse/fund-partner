@@ -130,6 +130,7 @@ router.put(
 
 router.get(
   '/employees',
+  need('employees_manage'),
   wrap(async (_req, res) => {
     res.json({
       items: await all(
@@ -209,6 +210,7 @@ router.put(
 
 router.get(
   '/settings',
+  need('settings_manage'),
   wrap(async (_req, res) => {
     res.json({ settings: await getAllSettings(), defaults: DEFAULT_SETTINGS });
   }),
@@ -234,6 +236,7 @@ router.put(
 
 router.get(
   '/approvals',
+  need('employees_manage'),
   wrap(async (req, res) => {
     res.json({
       items: await all(

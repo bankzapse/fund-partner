@@ -55,7 +55,11 @@ export function intParam(value, fallback = null) {
 /** สร้างไฟล์ CSV ที่ Excel ภาษาไทยเปิดได้ (มี BOM) — SRS ข้อ 16 */
 export function sendCsv(res, filename, rows, headers) {
   const esc = (v) => {
-    const s = v === null || v === undefined ? '' : String(v);
+    let s = v === null || v === undefined ? '' : String(v);
+    // กัน CSV formula injection: ถ้าค่าขึ้นต้นด้วย = + - @ (หรือ tab/CR)
+    // Excel/Sheets จะตีความเป็นสูตร ทำให้ชื่อลูกหนี้/หมายเหตุที่พิมพ์ =cmd... รันได้
+    // นำหน้าด้วยเครื่องหมาย ' เพื่อบังคับให้เป็นข้อความล้วน (วิธีมาตรฐานของ OWASP)
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
     return /[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
   };
   const head = headers.map((h) => esc(h.label)).join(',');

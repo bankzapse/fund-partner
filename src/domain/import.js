@@ -517,6 +517,27 @@ async function createImportedContract({ data: d, debtorId, employeeId }, ctx) {
     let principalPaid = 0;
     let status = 'pending';
 
+    // สัญญาที่ยกยอดมาแบบชำระครบ (เงินต้นคงเหลือ = 0) ต้องปิดทุกงวดให้ครบ
+    // ไม่งั้นจะเหลืองวดค้างบนสัญญาที่ปิดแล้ว ทำให้รายงาน "งวดค้าง" ผิด
+    // และสัญญาไม่มีทางปิดตามปกติเพราะไม่มีงวดให้ชำระต่อ (ชนกับสถานะ completed)
+    if (fullyPaid) {
+      interestPaid = row.interest_due;
+      principalPaid = row.principal_due;
+      status = 'paid';
+      await run(
+        `INSERT INTO installments
+           (contract_id, seq, due_date, due_amount, interest_due, principal_due,
+            interest_paid, principal_paid, status)
+         VALUES (:cid, :seq, :due, :amt, :i, :p, :ip, :pp, :status)`,
+        {
+          cid: contractId, seq: row.seq, due: row.due_date, amt: row.due_amount,
+          i: row.interest_due, p: row.principal_due,
+          ip: interestPaid, pp: principalPaid, status,
+        },
+      );
+      continue;
+    }
+
     const withinPaidCount = paidTarget !== null && i < paidTarget;
 
     if (withinPaidCount) {

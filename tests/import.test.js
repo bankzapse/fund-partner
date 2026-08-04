@@ -278,6 +278,30 @@ describe('นำเข้าจริง', () => {
     assert.equal(after.principal_remaining, 70_000 - 3_000, 'ตัดจากยอดยกมา ไม่ใช่เงินต้นเต็ม');
   });
 
+  test('นำเข้าสัญญาที่ชำระครบแล้ว ต้องปิดทุกงวด ไม่เหลืองวดค้างบนสัญญาที่ปิด', async () => {
+    // ยอดยกมา = 0 แต่ไม่ได้ระบุจำนวนงวดที่ชำระ — เดิมจะเหลืองวด pending บนสัญญา completed
+    const rows = [
+      ['DONE1', 'ปิดแล้ว', '', '', '2000', '100', '20', '24', '2026-01-01', '0'],
+    ];
+    await commitImport({ rows, mapping, kind: 'contracts', options: {} }, ctx);
+    const debtor = await get(`SELECT * FROM debtors WHERE code = 'DONE1'`);
+    const contract = await get(`SELECT * FROM contracts WHERE debtor_id = :id`, { id: debtor.id });
+    assert.equal(contract.status, 'completed', 'ยอดยกมา 0 ต้องปิดสัญญา');
+
+    const pending = await get(
+      `SELECT COUNT(*)::int n FROM installments WHERE contract_id = :id AND status <> 'paid'`,
+      { id: contract.id },
+    );
+    assert.equal(pending.n, 0, 'สัญญาที่ปิดแล้วต้องไม่เหลืองวดค้าง');
+
+    const mismatch = await get(
+      `SELECT COUNT(*)::int n FROM installments
+        WHERE contract_id = :id AND (principal_paid <> principal_due OR interest_paid <> interest_due)`,
+      { id: contract.id },
+    );
+    assert.equal(mismatch.n, 0, 'ทุกงวดต้องชำระเต็มทั้งต้นและดอกตามที่ค้างไว้');
+  });
+
   test('นำเข้าซ้ำด้วยรหัสเดิมจะใช้ลูกหนี้เดิม ไม่สร้างซ้ำ', async () => {
     const rows = [['DUP1', 'ลูกหนี้ซ้ำ', '', '', '1000', '50', '20', '24', '2026-06-01', '1000']];
     const first = await commitImport({ rows, mapping, kind: 'contracts', options: {} }, ctx);

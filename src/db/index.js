@@ -1,7 +1,20 @@
 import { readFileSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { nowISO } from '../lib/time.js';
+
+/**
+ * เก็บ client ของ transaction ปัจจุบันไว้ตาม async context ของแต่ละคำขอ
+ * แทนการไปเขียนทับตัวแปรร่วม (driver.query) แบบเดิม
+ *
+ * ของเดิมสลับ driver.query ทั้งก้อนระหว่างทำ transaction ซึ่งพังทันทีเมื่อมี
+ * คำขอสองอันทำ transaction พร้อมกันบน instance เดียว (Node รับหลายคำขอสลับกันได้
+ * ระหว่างรอ I/O) — query ของคำขอ A จะไหลไปลง transaction ของคำขอ B เงียบ ๆ
+ * ทำให้ยอดข้ามสัญญา/ข้ามคน AsyncLocalStorage แยก context ให้แต่ละ transaction
+ * เห็น client ของตัวเองเท่านั้น
+ */
+const txStore = new AsyncLocalStorage();
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '../..');
@@ -141,7 +154,10 @@ export function toPositional(sql, params = {}) {
 async function exec(sql, params) {
   const driver = await db();
   const { text, values } = toPositional(sql, params);
-  return driver.query(text, values);
+  // ถ้าอยู่ใน transaction ให้ยิงไปที่ client ที่จองไว้ของ transaction นั้น
+  // ไม่งั้นใช้ pool ปกติ (แต่ละ query จับ connection ใหม่เอง)
+  const client = txStore.getStore();
+  return client ? client.query(text, values) : driver.query(text, values);
 }
 
 export async function all(sql, params = {}) {
@@ -223,36 +239,45 @@ function normalizeRows(rows, fields) {
  * ฝั่ง pg ต้องจอง client เดียวไว้ตลอด ไม่งั้น BEGIN กับ COMMIT อาจไปคนละ connection
  */
 export async function tx(fn) {
+  // transaction ซ้อน: ถ้ากำลังอยู่ใน transaction อยู่แล้ว ให้ทำงานร่วมอันเดิม
+  // ไม่เปิด BEGIN ใหม่/ไม่จอง connection ใหม่ (กัน deadlock และยอดครึ่ง ๆ กลาง ๆ)
+  if (txStore.getStore()) return await fn();
+
   const driver = await db();
 
   if (!driver.pool) {
-    // PGlite เป็น connection เดียวอยู่แล้ว
-    await driver.query('BEGIN');
-    try {
-      const result = await fn();
-      await driver.query('COMMIT');
-      return result;
-    } catch (err) {
-      await driver.query('ROLLBACK').catch(() => {});
-      throw err;
-    }
+    // PGlite เป็น connection เดียวอยู่แล้ว — ห่อด้วย context เพื่อให้ exec เห็น client เดียวกัน
+    const client = { query: (text, values) => driver.query(text, values) };
+    return await txStore.run(client, async () => {
+      await client.query('BEGIN');
+      try {
+        const result = await fn();
+        await client.query('COMMIT');
+        return result;
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+      }
+    });
   }
 
+  // จอง client หนึ่งตัวไว้ตลอด transaction แล้วผูกไว้กับ async context
+  // ทุก query ที่เกิดใน fn จะไหลไปที่ client ตัวนี้ผ่าน txStore เท่านั้น
+  // คำขออื่นที่ทำ transaction พร้อมกันจะได้ client คนละตัว ไม่ปนกัน
   const client = await driver.pool.connect();
-  const previous = driver.query;
-  driver.query = (text, values) => client.query(text, values);
-  try {
-    await client.query('BEGIN');
-    const result = await fn();
-    await client.query('COMMIT');
-    return result;
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    throw err;
-  } finally {
-    driver.query = previous;
-    client.release();
-  }
+  return await txStore.run(client, async () => {
+    try {
+      await client.query('BEGIN');
+      const result = await fn();
+      await client.query('COMMIT');
+      return result;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  });
 }
 
 /**

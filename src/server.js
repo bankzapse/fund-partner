@@ -28,6 +28,24 @@ export async function createApp() {
 
   const app = express();
   app.disable('x-powered-by');
+
+  // ส่วนหัวความปลอดภัย — บน Vercel ตั้งไว้ใน vercel.json ด้วย แต่ตั้งซ้ำที่นี่
+  // เพื่อให้ครอบคลุมตอนรันเองในเครื่อง/โฮสต์อื่น และกันกรณีตั้งค่าแพลตฟอร์มหลุด
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.setHeader('Permissions-Policy', 'geolocation=(), camera=(), microphone=(), payment=()');
+    res.setHeader(
+      'Content-Security-Policy',
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+        "img-src 'self' data: https:; font-src 'self'; connect-src 'self'; " +
+        "object-src 'none'; base-uri 'self'; frame-ancestors 'self'; form-action 'self'",
+    );
+    next();
+  });
+
   app.use(express.json({ limit: '12mb' })); // รองรับแนบรูปแบบ base64
 
   // แยกคุกกี้เอง (ไม่พึ่ง dependency เพิ่ม)
@@ -86,7 +104,13 @@ export async function createApp() {
   app.use('/api/admin', adminRoutes);
   app.use('/api/import', importRoutes);
 
-  app.use('/uploads', express.static(UPLOAD_DIR));
+  // ไฟล์แนบเป็นข้อมูลอ่อนไหว (สำเนาบัตรประชาชน หลักฐานการเงิน)
+  // ต้องผ่านด่านล็อกอินก่อน ไม่งั้นใครมี URL ก็เปิดดูได้ทันที
+  // (เส้นทางนี้ใช้เฉพาะตอนรันในเครื่อง — production เก็บไฟล์บน Supabase Storage)
+  app.use('/uploads', (req, res, next) => {
+    if (!req.ctx?.user) return res.status(401).json({ error: 'กรุณาเข้าสู่ระบบ' });
+    next();
+  }, express.static(UPLOAD_DIR));
 
   // ที่อยู่เดิมของหน้าแนะนำ — ส่งต่อถาวรมาที่หน้าแรก กันเนื้อหาซ้ำสองที่
   app.get('/welcome', (_req, res) => res.redirect(301, '/'));
@@ -138,9 +162,12 @@ export async function createApp() {
   app.use((err, _req, res, _next) => {
     const status = err.status ?? 500;
     if (status >= 500) console.error(err);
-    // บอกให้ผู้เรียกรู้ว่าต้องรอนานแค่ไหน (ใช้ตอนถูกล็อกเพราะเข้าสู่ระบบผิดหลายครั้ง)
     if (err.retryAfterSeconds > 0) res.setHeader('Retry-After', String(err.retryAfterSeconds));
-    res.status(status).json({ error: err.message || 'เกิดข้อผิดพลาดภายในระบบ' });
+    // error 500 ไม่ส่งข้อความดิบกลับ เพราะอาจมีชื่อตาราง foreign key หรือโครงสร้าง
+    // ฐานข้อมูลปนอยู่ ซึ่งช่วยผู้โจมตีวางแผนต่อ ส่งข้อความกลาง ๆ แทน
+    // ส่วน error ที่ตั้ง status เอง (4xx) เป็นข้อความที่เราเขียนให้ผู้ใช้อ่าน จึงส่งได้
+    const message = status >= 500 ? 'เกิดข้อผิดพลาดภายในระบบ' : (err.message || 'เกิดข้อผิดพลาด');
+    res.status(status).json({ error: message });
   });
 
   // ล้าง session ที่หมดอายุเป็นระยะ (ไม่ทำบน Serverless เพราะ process ไม่อยู่ยาว)

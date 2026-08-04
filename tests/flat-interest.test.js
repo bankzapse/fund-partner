@@ -619,7 +619,7 @@ describe('เฟส 2 — บั๊กที่พบจากการตรว
       reason: 'ลองยกเลิก',
     });
     assert.equal(res.status, 400, 'ต้องยกเลิกไม่ได้');
-    assert.match(res.body.error, /ยกเลิกเดี่ยวไม่ได้/);
+    assert.match(res.body.error, /ยกเลิกเดี่ยว.*ไม่ได้/);
   });
 
   test('รายการดอกรียอดลงวันที่ของสัญญาใหม่ ไม่ใช่วันนี้', async () => {

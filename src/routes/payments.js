@@ -132,9 +132,15 @@ router.post(
   '/preview',
   need('payments_create'),
   wrap(async (req, res) => {
+    const contractId = intParam(req.body?.contract_id);
+    // ตรวจสิทธิ์เหมือนตอนบันทึกจริง ไม่งั้นผู้ทวงถามพื้นที่อื่นจะ preview
+    // สัญญาที่ไม่ใช่ของตัวเองได้ ทำให้เห็นยอดหนี้/ตารางงวดของลูกค้าคนอื่น
+    const contract = await getContract(contractId);
+    if (!contract) return res.status(404).json({ error: 'ไม่พบสัญญา' });
+    await assertDebtorAccess(req.ctx.user, contract.debtor_id, 'payments_create');
     res.json({
       preview: await previewPayment({
-        contractId: intParam(req.body?.contract_id),
+        contractId,
         amountPaid: intParam(req.body?.amount_paid, 0),
         extraToPrincipal: req.body?.extra_to_principal === true,
       }),
