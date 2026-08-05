@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { all, get, run, insert, tx, databaseUrl, getAllSettings, setSetting, DEFAULT_SETTINGS } from '../db/index.js';
 import { hashPassword, publicUser } from '../lib/auth.js';
 import { nowISO } from '../lib/time.js';
-import { audit, auditTrail } from '../lib/audit.js';
+import { audit, auditTrail, accessTrail } from '../lib/audit.js';
 import { ROLES, MATRIX } from '../lib/permissions.js';
 import { voidPayment } from '../domain/payments.js';
 import { reyod } from '../domain/contracts.js';
@@ -308,6 +308,24 @@ router.get(
         entity: req.query.entity,
         entityId: req.query.entity_id,
         limit: intParam(req.query.limit, 200),
+      }),
+    });
+  }),
+);
+
+// ---- บันทึกการเข้าถึงข้อมูลส่วนบุคคล (PDPA) ---------------------------------
+// ตอบได้ว่าใครเปิดดูข้อมูล/สำเนาบัตรของลูกหนี้คนไหน เมื่อไหร่ ตามคำขอของเจ้าของข้อมูล
+router.get(
+  '/access-log',
+  need('audit_view'),
+  wrap(async (req, res) => {
+    res.json({
+      items: await accessTrail({
+        entity: req.query.entity,
+        entityId: req.query.entity_id,
+        from: req.query.from,
+        to: req.query.to,
+        limit: intParam(req.query.limit, 500),
       }),
     });
   }),

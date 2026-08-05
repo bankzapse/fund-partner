@@ -12,6 +12,7 @@ import { publicUser } from './lib/auth.js';
 import { usingSupabaseStorage, signedUrlFor, objectKeyFromPath } from './lib/storage.js';
 import { clientIp } from './lib/client-ip.js';
 import { rateLimit } from './lib/rate-limit.js';
+import { logAccess } from './lib/audit.js';
 
 import authRoutes from './routes/auth.js';
 import debtorRoutes from './routes/debtors.js';
@@ -131,7 +132,14 @@ export async function createApp() {
       const name = objectKeyFromPath(req.params.name);
       if (!name) return res.status(400).type('text/plain; charset=utf-8').send('ชื่อไฟล์ไม่ถูกต้อง');
       signedUrlFor(name, 60)
-        .then((url) => {
+        .then(async (url) => {
+          // PDPA: บันทึกว่าใครเปิดดูไฟล์แนบ (สำเนาบัตร/หลักฐาน) ตัวไหน
+          await logAccess({
+            userId: req.ctx.user.id,
+            entity: 'attachment',
+            entityId: name,
+            ip: req.ctx.ip,
+          });
           res.setHeader('Cache-Control', 'private, no-store');
           res.redirect(302, url);
         })

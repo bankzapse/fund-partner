@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { all, get, run, insert, tx, nextCounter } from '../db/index.js';
 import { nowISO } from '../lib/time.js';
-import { audit, auditTrail } from '../lib/audit.js';
+import { audit, auditTrail, logAccess } from '../lib/audit.js';
 import { contractSummary, contractBehaviour } from '../domain/contracts.js';
 import { listPayments } from '../domain/payments.js';
 import {
@@ -74,6 +74,14 @@ router.get(
        ORDER BY d.code`,
       { emp: scope },
     );
+    // PDPA: การส่งออกเป็นการเข้าถึงข้อมูลส่วนบุคคลจำนวนมากในครั้งเดียว ต้องบันทึกไว้
+    await logAccess({
+      userId: req.ctx.user.id,
+      entity: 'debtor_export',
+      entityId: null,
+      detail: { count: rows.length, scope: scope === null ? 'ทั้งหมด' : `พนักงาน ${scope}` },
+      ip: req.ctx.ip,
+    });
     sendCsv(res, 'debtors.csv', rows, [
       { label: 'รหัสลูกหนี้', key: 'code' },
       { label: 'ชื่อ-นามสกุล', key: 'full_name' },
@@ -99,6 +107,15 @@ router.get(
       { id },
     );
     if (!debtor) return res.status(404).json({ error: 'ไม่พบลูกหนี้' });
+
+    // PDPA: บันทึกว่าใครเปิดดูข้อมูลส่วนบุคคลของลูกหนี้คนนี้
+    await logAccess({
+      userId: req.ctx.user.id,
+      entity: 'debtor',
+      entityId: id,
+      detail: { code: debtor.code, name: debtor.full_name },
+      ip: req.ctx.ip,
+    });
 
     const contractRows = await all(
       `SELECT * FROM contracts WHERE debtor_id = :id ORDER BY id DESC`,

@@ -8,10 +8,11 @@ export async function renderSettings() {
   const body = el('div', {});
 
   async function load() {
-    const [{ settings }, approvals, audit, backups] = await Promise.all([
+    const [{ settings }, approvals, audit, access, backups] = await Promise.all([
       api.get('/api/admin/settings'),
       api.get('/api/admin/approvals?status=pending'),
       api.get('/api/admin/audit?limit=100'),
+      api.get('/api/admin/access-log?limit=100').catch(() => ({ items: [] })),
       api.get('/api/admin/backups').catch(() => ({ items: [] })),
     ]);
     state.settings = settings;
@@ -20,6 +21,7 @@ export async function renderSettings() {
       approvalsCard(approvals.items, load),
       backupCard(backups.items, load),
       auditCard(audit.items),
+      accessLogCard(access.items),
     );
   }
 
@@ -348,6 +350,45 @@ function auditCard(items) {
         ),
       ),
       'ยังไม่มีประวัติ',
+    ),
+  );
+}
+
+const ACCESS_LABEL = {
+  debtor: 'เปิดดูข้อมูลลูกหนี้',
+  debtor_export: 'ส่งออกรายชื่อลูกหนี้',
+  attachment: 'เปิดไฟล์แนบ (สำเนาบัตร/หลักฐาน)',
+};
+
+function accessDetail(a) {
+  let d = null;
+  try { d = a.after_json ? JSON.parse(a.after_json) : null; } catch { /* ข้าม */ }
+  if (!d) return a.entity_id ?? '-';
+  if (d.name) return `${d.name}${d.code ? ` (${d.code})` : ''}`;
+  if (d.count !== undefined) return `${d.count} รายการ · ${d.scope ?? ''}`;
+  return a.entity_id ?? '-';
+}
+
+function accessLogCard(items) {
+  return el(
+    'div',
+    { class: 'card' },
+    el('h3', {}, 'บันทึกการเข้าถึงข้อมูลส่วนบุคคล (PDPA)'),
+    el('p', { class: 'muted small' },
+      'ใครเปิดดูข้อมูลหรือไฟล์แนบของลูกหนี้คนไหน เมื่อไหร่ — ใช้ตอบคำขอตรวจสอบตาม PDPA'),
+    table(
+      ['เวลา', 'ผู้ใช้', 'การกระทำ', 'ข้อมูลที่เข้าถึง'],
+      items.map((a) =>
+        el(
+          'tr',
+          {},
+          el('td', { class: 'small nowrap' }, a.created_at),
+          el('td', { class: 'small' }, a.user_name ?? '-'),
+          el('td', { class: 'small' }, ACCESS_LABEL[a.entity] ?? a.entity),
+          el('td', { class: 'small' }, accessDetail(a)),
+        ),
+      ),
+      'ยังไม่มีการเข้าถึงที่บันทึกไว้',
     ),
   );
 }

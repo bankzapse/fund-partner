@@ -453,6 +453,28 @@ describe('ความปลอดภัย: ช่องโหว่ที่�
     assert.equal(rateLimit('198.51.100.8', { limit: 3 }).ok, true);
   });
 
+  test('เปิดดูข้อมูลลูกหนี้ถูกบันทึกลง access log (PDPA)', async () => {
+    // เจ้าของเปิดดูลูกหนี้ B แล้วต้องมีบันทึกการเข้าถึง
+    await api('owner', 'GET', `/api/debtors/${debtorB}`);
+    const log = await api('owner', 'GET', `/api/admin/access-log?entity=debtor&entity_id=${debtorB}`);
+    assert.equal(log.status, 200);
+    assert.ok(log.body.items.length >= 1, 'ต้องมีบันทึกการเปิดดู');
+    assert.equal(log.body.items[0].entity, 'debtor');
+    assert.equal(String(log.body.items[0].entity_id), String(debtorB));
+    assert.ok(log.body.items[0].user_name, 'ต้องรู้ว่าใครเปิดดู');
+  });
+
+  test('การเปิดดู (view) ไม่ปนอยู่ในประวัติการแก้ไข (audit trail)', async () => {
+    const detail = await api('owner', 'GET', `/api/debtors/${debtorB}`);
+    assert.ok(!detail.body.audit.some((a) => a.action === 'view'),
+      'ประวัติการแก้ไขต้องไม่มี action=view ปนมา');
+  });
+
+  test('พนักงานเก็บเงินดู access log ไม่ได้', async () => {
+    const r = await api('collector', 'GET', '/api/admin/access-log');
+    assert.equal(r.status, 403);
+  });
+
   test('CSV export ไม่ให้ค่าที่ขึ้นต้นด้วย = + - @ กลายเป็นสูตร Excel', async () => {
     // สร้างลูกหนี้ชื่อขึ้นต้นด้วย = แล้วส่งออก CSV รายชื่อลูกหนี้
     await api('owner', 'POST', '/api/debtors', { full_name: '=SUM(1+1)*cmd|calc' });
