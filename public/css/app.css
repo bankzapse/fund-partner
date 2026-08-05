@@ -601,3 +601,20 @@ td, .stat .value, .kv .v { overflow-wrap: anywhere; }
   .card { box-shadow: none; border: 1px solid #ccc; break-inside: avoid; }
   .sk { display: none !important; }
 }
+
+/* ---- ยืนยันตัวตนสองชั้น (2FA) ---- */
+.totp-secret {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 1.15rem; letter-spacing: 0.14em; word-break: break-all;
+  background: var(--navy-50); border: 1px dashed var(--navy);
+  color: var(--navy); border-radius: 0.5rem; padding: 0.7rem 0.9rem; text-align: center;
+}
+.recovery-grid {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.4rem; margin: 0.6rem 0;
+}
+.recovery-grid code {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 0.98rem;
+  background: var(--gold-soft); border: 1px solid #f2e2c4; color: #6b4a05;
+  border-radius: 0.4rem; padding: 0.4rem 0.5rem; text-align: center; letter-spacing: 0.05em;
+}
+.twofa-ok { font-weight: 700; color: var(--navy); }

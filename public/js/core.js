@@ -24,7 +24,9 @@ async function request(method, url, body) {
   }
   const text = await res.text();
   const data = text ? JSON.parse(text) : {};
-  if (!res.ok) throw Object.assign(new Error(data.error || 'เกิดข้อผิดพลาด'), { status: res.status });
+  // แนบ data ของ response ไปกับ error ด้วย เผื่อผู้เรียกต้องดูรายละเอียด
+  // (เช่น ธง two_factor_required ตอนเข้าสู่ระบบที่ต้องใช้รหัสยืนยัน 2 ชั้น)
+  if (!res.ok) throw Object.assign(new Error(data.error || 'เกิดข้อผิดพลาด'), { status: res.status, data });
   return data;
 }
 

@@ -14,6 +14,10 @@ CREATE TABLE IF NOT EXISTS users (
   extra_perms    TEXT    NOT NULL DEFAULT '{}',
   is_active      INTEGER NOT NULL DEFAULT 1,
   last_login_at  TEXT,
+  totp_secret    TEXT,              -- secret ที่ใช้จริงเมื่อเปิด 2FA แล้ว (Base32)
+  totp_pending   TEXT,              -- secret ระหว่างขั้นตอนตั้งค่า ก่อนยืนยันสำเร็จ
+  totp_enabled   INTEGER NOT NULL DEFAULT 0,
+  totp_recovery  TEXT,              -- รหัสสำรองที่แฮชแล้ว เก็บเป็น JSON array
   created_at     TEXT    NOT NULL,
   updated_at     TEXT    NOT NULL
 );
@@ -301,6 +305,12 @@ ALTER TABLE contracts ADD COLUMN IF NOT EXISTS total_due BIGINT NOT NULL DEFAULT
 -- ในยอดที่ยกไปตอนรียอด มีดอกเบี้ยเดิมที่ยังไม่ได้รับรู้ปนอยู่เท่าไร
 -- เก็บไว้เพื่อตรวจสอบย้อนหลังได้ว่ารายได้ที่รับรู้ตอนรียอดมาจากไหน
 ALTER TABLE contract_links ADD COLUMN IF NOT EXISTS carried_interest BIGINT NOT NULL DEFAULT 0;
+
+-- ยืนยันตัวตนสองชั้น (TOTP) — เพิ่มให้ฐานข้อมูลเดิมที่สร้างก่อนมีฟีเจอร์นี้
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret   TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_pending  TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled  INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_recovery TEXT;
 
 -- ---------------------------------------------------------------------------
 -- ความปลอดภัยระดับแถว (Row Level Security)

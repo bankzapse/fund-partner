@@ -4,6 +4,7 @@ import { get, run, insert, getSettingInt } from '../db/index.js';
 import { nowISO } from './time.js';
 import { audit } from './audit.js';
 import { assertNotLocked, recordFailure, clearFailures, purgeLoginAttempts } from './login-guard.js';
+import { verifySecondFactor } from './twofactor.js';
 
 export const COOKIE_NAME = 'fp_session';
 
@@ -51,7 +52,7 @@ async function expiryFromNow() {
   return new Date(Date.now() + minutes * 60_000).toISOString();
 }
 
-export async function login({ username, password, ip }) {
+export async function login({ username, password, token, ip }) {
   // ต้องตรวจการล็อก "ก่อน" เช็ครหัสผ่าน ไม่งั้นผู้โจมตียังลองรหัสได้ต่อระหว่างถูกล็อก
   await assertNotLocked({ username, ip });
 
@@ -78,16 +79,49 @@ export async function login({ username, password, ip }) {
     // บัญชีถูกปิด ไม่ใช่การเดารหัส จึงไม่นับเป็นความผิด แต่ก็ไม่ล้างตัวนับเดิมทิ้ง
     throw Object.assign(new Error('บัญชีนี้ถูกปิดการใช้งาน'), { status: 403 });
   }
+
+  // ปัจจัยที่สอง (2FA) — รหัสผ่านถูกแล้ว แต่ถ้าเปิด 2FA ไว้ต้องผ่านรหัสยืนยันอีกชั้น
+  if (user.totp_enabled) {
+    const rawToken = String(token ?? '').trim();
+    if (!rawToken) {
+      // รหัสผ่านถูก แต่ยังขาดรหัส 2FA — ไม่นับเป็นการเข้าผิด (ไม่ recordFailure)
+      // แจ้งฝั่งหน้าเว็บให้ขอรหัสยืนยันเพิ่ม
+      throw Object.assign(new Error('กรุณากรอกรหัสยืนยัน 2 ชั้น'), {
+        status: 401,
+        twoFactorRequired: true,
+      });
+    }
+    const { ok, usedRecovery, remaining } = await verifySecondFactor(user, rawToken);
+    if (!ok) {
+      // รหัส 2FA ผิด นับเป็นความพยายามเข้าผิด กันการเดารหัส 2FA แบบไล่สุ่ม
+      await recordFailure({ username, ip });
+      throw Object.assign(new Error('รหัสยืนยัน 2 ชั้นไม่ถูกต้อง'), {
+        status: 401,
+        twoFactorRequired: true,
+      });
+    }
+    if (usedRecovery) {
+      await audit({
+        userId: user.id,
+        action: 'login_recovery_code',
+        entity: 'user',
+        entityId: user.id,
+        ip,
+        reason: `ใช้รหัสสำรองเข้าสู่ระบบ เหลืออีก ${remaining} รหัส`,
+      });
+    }
+  }
+
   await clearFailures({ username, ip });
-  const token = randomBytes(32).toString('hex');
+  const sessionToken = randomBytes(32).toString('hex');
   await run(
     `INSERT INTO sessions (token, user_id, created_at, expires_at)
      VALUES (:t, :uid, :now, :exp)`,
-    { t: token, uid: user.id, now: nowISO(), exp: await expiryFromNow() },
+    { t: sessionToken, uid: user.id, now: nowISO(), exp: await expiryFromNow() },
   );
   await run(`UPDATE users SET last_login_at = :now WHERE id = :id`, { id: user.id, now: nowISO() });
   await audit({ userId: user.id, action: 'login', entity: 'user', entityId: user.id, ip });
-  return { token, user: publicUser(user) };
+  return { token: sessionToken, user: publicUser(user) };
 }
 
 export async function logout(token, ctx) {
@@ -116,8 +150,9 @@ export async function userFromToken(token) {
 
 export function publicUser(user) {
   if (!user) return null;
-  const { password_hash, ...rest } = user;
-  return rest;
+  // ไม่ส่งความลับใด ๆ ออกไปฝั่งหน้าเว็บ — เก็บเฉพาะสถานะว่าเปิด 2FA ไว้หรือไม่
+  const { password_hash, totp_secret, totp_pending, totp_recovery, totp_enabled, ...rest } = user;
+  return { ...rest, two_factor_enabled: Boolean(totp_enabled) };
 }
 
 /** ล้าง session ที่หมดอายุ */

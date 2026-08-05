@@ -36,12 +36,28 @@ export async function renderEmployees() {
               el('td', { class: 'small mono' }, u.username),
               el('td', {}, u.full_name),
               el('td', {}, badge('completed', ROLE_LABEL[u.role] ?? u.role)),
-              el('td', {}, u.is_active ? badge('normal', 'เปิดใช้งาน') : badge('disabled', 'ปิดใช้งาน')),
+              el('td', {},
+                u.is_active ? badge('normal', 'เปิดใช้งาน') : badge('disabled', 'ปิดใช้งาน'),
+                u.two_factor_enabled ? el('span', { class: 'badge completed', style: 'margin-left:.3rem', title: 'เปิดยืนยันตัวตน 2 ชั้น' }, '🔒 2FA') : null,
+              ),
               el('td', { class: 'small' }, u.last_login_at ?? '-'),
-              el('td', {}, el('button', {
-                class: 'btn ghost sm',
-                onclick: () => openUserForm(u, employees.items, load),
-              }, 'แก้ไข')),
+              el('td', {}, el('div', { class: 'btn-row' },
+                el('button', {
+                  class: 'btn ghost sm',
+                  onclick: () => openUserForm(u, employees.items, load),
+                }, 'แก้ไข'),
+                u.two_factor_enabled ? el('button', {
+                  class: 'btn ghost sm',
+                  onclick: async () => {
+                    if (!confirm(`รีเซ็ต 2FA ของ ${u.username}? ผู้ใช้จะเข้าด้วยรหัสผ่านอย่างเดียวได้ แล้วตั้ง 2FA ใหม่เอง`)) return;
+                    try {
+                      await api.post(`/api/admin/users/${u.id}/reset-2fa`);
+                      toast(`รีเซ็ต 2FA ของ ${u.username} แล้ว`, 'ok');
+                      load();
+                    } catch (err) { toastError(err); }
+                  },
+                }, 'รีเซ็ต 2FA') : null,
+              )),
             ),
           ),
         ),

@@ -64,6 +64,15 @@ function renderLogin() {
   const username = el('input', { autocomplete: 'username', placeholder: 'ชื่อผู้ใช้' });
   const password = el('input', { type: 'password', autocomplete: 'current-password', placeholder: 'รหัสผ่าน' });
   const button = el('button', { class: 'btn block', type: 'submit' }, 'เข้าสู่ระบบ');
+
+  // ช่องรหัสยืนยัน 2 ชั้น — ซ่อนไว้ก่อน จะโผล่เมื่อเซิร์ฟเวอร์แจ้งว่าบัญชีเปิด 2FA
+  const totp = el('input', {
+    inputmode: 'numeric', autocomplete: 'one-time-code',
+    placeholder: 'รหัส 6 หลัก หรือรหัสสำรอง',
+  });
+  const totpField = el('div', { class: 'field', style: 'display:none' },
+    el('label', {}, 'รหัสยืนยัน 2 ชั้น'), totp);
+  let needTwoFactor = false;
   // สลับปุ่มเป็นสถานะกำลังโหลด — สปินเนอร์หมุน + เปลี่ยนข้อความ
   // ปิดปุ่มไว้ด้วย กันกดซ้ำระหว่างรอ
   const setLoading = (on) => {
@@ -92,13 +101,27 @@ function renderLogin() {
           const data = await api.post('/api/auth/login', {
             username: username.value,
             password: password.value,
+            token: needTwoFactor ? totp.value.trim() : undefined,
           });
           state.user = data.user;
           state.permissions = data.permissions;
           location.hash = '#/';
           await boot();
         } catch (err) {
-          if (err.status === 429) {
+          if (err.status === 401 && err.data?.two_factor_required) {
+            // รหัสผ่านถูกแล้ว แต่ต้องกรอกรหัส 2 ชั้น — โผล่ช่องรหัสให้กรอก
+            if (!needTwoFactor) {
+              needTwoFactor = true;
+              totpField.style.display = '';
+              totp.focus();
+            } else {
+              // เคยโผล่แล้วแต่รหัสยังผิด
+              notice.textContent = 'รหัสยืนยัน 2 ชั้นไม่ถูกต้อง กรุณาลองใหม่';
+              notice.style.display = '';
+              totp.value = '';
+              totp.focus();
+            }
+          } else if (err.status === 429) {
             notice.textContent = err.message;
             notice.style.display = '';
             password.value = '';
@@ -120,6 +143,7 @@ function renderLogin() {
     notice,
     el('div', { class: 'field' }, el('label', {}, 'ชื่อผู้ใช้'), username),
     el('div', { class: 'field' }, el('label', {}, 'รหัสผ่าน'), password),
+    totpField,
     button,
     // เตือนไว้ตรงนี้เพราะเคยมีคนกรอกรหัสพนักงาน (E0001) แทนชื่อผู้ใช้
     el('p', { class: 'login-foot' }, 'ใช้ชื่อผู้ใช้ที่เจ้าของกิจการตั้งให้ ไม่ใช่รหัสพนักงาน'),
@@ -211,6 +235,11 @@ function openMoreMenu(items) {
           { class: 'btn ghost block mt', onclick: () => { close(); openChangePassword(); } },
           'เปลี่ยนรหัสผ่าน',
         ),
+        el(
+          'button',
+          { class: 'btn ghost block', style: 'margin-top:.4rem', onclick: () => { close(); openTwoFactor(); } },
+          state.user?.two_factor_enabled ? 'ยืนยันตัวตน 2 ชั้น (เปิดอยู่)' : 'ตั้งค่ายืนยันตัวตน 2 ชั้น',
+        ),
       ),
     );
   });
@@ -244,9 +273,89 @@ function openChangePassword() {
         'div',
         {},
         field('รหัสผ่านเดิม', cur),
-        field('รหัสผ่านใหม่', next, 'อย่างน้อย 6 ตัวอักษร'),
+        field('รหัสผ่านใหม่', next, 'อย่างน้อย 8 ตัวอักษร'),
         el('div', { class: 'btn-row mt' }, save, el('button', { class: 'btn ghost', onclick: close }, 'ยกเลิก')),
       );
+    });
+  });
+}
+
+// จัดการยืนยันตัวตนสองชั้น (2FA) ของบัญชีตัวเอง — เปิด/ปิด แบบทีละขั้น
+function openTwoFactor() {
+  import('./core.js').then(({ modal, field, toast: t }) => {
+    modal('ยืนยันตัวตนสองชั้น (2FA)', (close) => {
+      const box = el('div', {});
+
+      const renderRecovery = (codes) => {
+        clear(box);
+        box.append(
+          el('p', { class: 'twofa-ok' }, '✅ เปิดใช้ 2FA สำเร็จ'),
+          el('p', {}, 'เก็บ "รหัสสำรอง" ต่อไปนี้ไว้ในที่ปลอดภัย ใช้เข้าระบบได้ตอนทำมือถือหาย (แต่ละรหัสใช้ได้ครั้งเดียว):'),
+          el('div', { class: 'recovery-grid' }, codes.map((c) => el('code', {}, c))),
+          el('p', { class: 'warn' }, '⚠️ รหัสสำรองจะแสดงเพียงครั้งเดียว โปรดบันทึกไว้ตอนนี้'),
+          el('div', { class: 'btn-row mt' }, el('button', { class: 'btn', onclick: close }, 'บันทึกแล้ว ปิดหน้าต่าง')),
+        );
+      };
+
+      const renderSetup = (info) => {
+        clear(box);
+        const code = el('input', { inputmode: 'numeric', autocomplete: 'one-time-code', placeholder: 'รหัส 6 หลักจากแอป' });
+        box.append(
+          el('p', {}, '1) เปิดแอป Authenticator (เช่น Google Authenticator) แล้วเพิ่มบัญชีด้วยการกรอกคีย์นี้:'),
+          el('div', { class: 'totp-secret' }, info.secret),
+          el('p', { class: 'muted small' }, 'ประเภท: ตามเวลา (Time-based) · 6 หลัก · เปลี่ยนทุก 30 วินาที'),
+          el('p', {}, '2) กรอกรหัส 6 หลักที่แอปแสดง เพื่อยืนยันว่าเพิ่มถูกต้อง:'),
+          field('รหัสยืนยัน', code),
+          el('div', { class: 'btn-row mt' },
+            el('button', { class: 'btn', onclick: async () => {
+              try {
+                const r = await api.post('/api/auth/2fa/enable', { token: code.value.trim() });
+                state.user.two_factor_enabled = true;
+                renderRecovery(r.recovery_codes);
+              } catch (err) { toastError(err); }
+            } }, 'ยืนยันเปิดใช้'),
+            el('button', { class: 'btn ghost', onclick: close }, 'ยกเลิก'),
+          ),
+        );
+        code.focus();
+      };
+
+      const render = () => {
+        clear(box);
+        if (state.user?.two_factor_enabled) {
+          const pw = el('input', { type: 'password' });
+          box.append(
+            el('p', { class: 'twofa-ok' }, '🔒 เปิดใช้ยืนยันตัวตนสองชั้นอยู่'),
+            el('p', { class: 'muted small' }, 'การเข้าสู่ระบบต้องใช้รหัสจากแอป Authenticator เพิ่มจากรหัสผ่าน'),
+            field('ยืนยันรหัสผ่านเพื่อปิด 2FA', pw),
+            el('div', { class: 'btn-row mt' },
+              el('button', { class: 'btn danger', onclick: async () => {
+                try {
+                  await api.post('/api/auth/2fa/disable', { password: pw.value });
+                  state.user.two_factor_enabled = false;
+                  t('ปิด 2FA แล้ว', 'ok');
+                  render();
+                } catch (err) { toastError(err); }
+              } }, 'ปิด 2FA'),
+              el('button', { class: 'btn ghost', onclick: close }, 'ปิดหน้าต่าง'),
+            ),
+          );
+          return;
+        }
+        box.append(
+          el('p', {}, 'เพิ่มความปลอดภัยอีกชั้น เวลาเข้าสู่ระบบต้องกรอกรหัสจากแอป Authenticator ในมือถือคุณ'),
+          el('div', { class: 'btn-row mt' },
+            el('button', { class: 'btn', onclick: async () => {
+              try { renderSetup(await api.post('/api/auth/2fa/setup')); }
+              catch (err) { toastError(err); }
+            } }, 'เริ่มตั้งค่า 2FA'),
+            el('button', { class: 'btn ghost', onclick: close }, 'ยกเลิก'),
+          ),
+        );
+      };
+
+      render();
+      return box;
     });
   });
 }

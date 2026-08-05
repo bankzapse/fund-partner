@@ -8,6 +8,7 @@ import { voidPayment } from '../domain/payments.js';
 import { reyod } from '../domain/contracts.js';
 import { wrap, need, intParam } from './_helpers.js';
 import { lockedAccounts, unlockUser } from '../lib/login-guard.js';
+import { reset2FA } from '../lib/twofactor.js';
 
 const router = Router();
 
@@ -125,6 +126,28 @@ router.put(
       ip: req.ctx.ip,
     });
     res.json({ user: after });
+  }),
+);
+
+// เจ้าของกิจการรีเซ็ต 2FA ให้พนักงานที่ทำมือถือหาย/เปลี่ยนเครื่อง
+// หลังรีเซ็ต พนักงานจะเข้าด้วยรหัสผ่านอย่างเดียวได้ แล้วตั้ง 2FA ใหม่เอง
+router.post(
+  '/users/:id/reset-2fa',
+  need('employees_manage'),
+  wrap(async (req, res) => {
+    const id = intParam(req.params.id);
+    const target = await get(`SELECT id, username, totp_enabled FROM users WHERE id = :id`, { id });
+    if (!target) return res.status(404).json({ error: 'ไม่พบผู้ใช้' });
+    await reset2FA(id);
+    await audit({
+      userId: req.ctx.user.id,
+      action: 'reset_2fa',
+      entity: 'user',
+      entityId: id,
+      ip: req.ctx.ip,
+      reason: `รีเซ็ต 2FA ให้ ${target.username}`,
+    });
+    res.json({ ok: true });
   }),
 );
 
@@ -351,9 +374,12 @@ router.get(
     const dump = { exported_at: nowISO(), source: databaseUrl() ? 'supabase' : 'local', tables: {} };
     for (const table of BACKUP_TABLES) {
       const rows = await all(`SELECT * FROM ${table}`);
-      // ไม่ส่งออกรหัสผ่านที่เข้ารหัสไว้ ป้องกันการนำไฟล์สำรองไปใช้ต่อโดยมิชอบ
+      // ไม่ส่งออกความลับของผู้ใช้ (รหัสผ่านที่แฮช, secret/รหัสสำรองของ 2FA)
+      // ป้องกันการนำไฟล์สำรองไปใช้ปลอมตัวหรือข้าม 2FA
       dump.tables[table] =
-        table === 'users' ? rows.map(({ password_hash, ...rest }) => rest) : rows;
+        table === 'users'
+          ? rows.map(({ password_hash, totp_secret, totp_pending, totp_recovery, ...rest }) => rest)
+          : rows;
     }
     await audit({
       userId: req.ctx.user.id,
