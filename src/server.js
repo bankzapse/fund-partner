@@ -182,6 +182,10 @@ export async function createApp() {
     res.sendFile(join(PUBLIC_DIR, 'app.html'));
   });
 
+  // หน้านโยบายความเป็นส่วนตัว (URL สั้น) — ต้องดักก่อน catch-all ด้านล่าง
+  // ไม่งั้นเส้นทางที่ไม่มีนามสกุลไฟล์จะถูก redirect กลับหน้าแรก
+  app.get('/privacy', (_req, res) => res.sendFile(join(PUBLIC_DIR, 'privacy.html')));
+
   // เส้นทางอื่นที่ไม่รู้จัก
   //
   // แยกสองกรณี เพราะปลายทางต่างกันโดยสิ้นเชิง:
