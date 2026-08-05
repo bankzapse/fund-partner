@@ -9,6 +9,7 @@ import { COOKIE_NAME, userFromToken, purgeSessions } from './lib/auth.js';
 import { permissionSummary } from './lib/permissions.js';
 import { renderLanding } from './lib/landing.js';
 import { publicUser } from './lib/auth.js';
+import { usingSupabaseStorage, signedUrlFor, objectKeyFromPath } from './lib/storage.js';
 
 import authRoutes from './routes/auth.js';
 import debtorRoutes from './routes/debtors.js';
@@ -105,12 +106,29 @@ export async function createApp() {
   app.use('/api/import', importRoutes);
 
   // ไฟล์แนบเป็นข้อมูลอ่อนไหว (สำเนาบัตรประชาชน หลักฐานการเงิน)
-  // ต้องผ่านด่านล็อกอินก่อน ไม่งั้นใครมี URL ก็เปิดดูได้ทันที
-  // (เส้นทางนี้ใช้เฉพาะตอนรันในเครื่อง — production เก็บไฟล์บน Supabase Storage)
+  // ต้องผ่านด่านล็อกอินก่อนเสมอ ไม่งั้นใครมี URL ก็เปิดดูได้ทันที
   app.use('/uploads', (req, res, next) => {
     if (!req.ctx?.user) return res.status(401).json({ error: 'กรุณาเข้าสู่ระบบ' });
     next();
-  }, express.static(UPLOAD_DIR));
+  });
+
+  // โหมด production: ไฟล์อยู่บน Supabase (bucket แบบ private)
+  // ผู้ใช้ที่ล็อกอินแล้วเท่านั้นจะได้ signed URL อายุสั้นแล้วพาไปเปิดไฟล์
+  if (usingSupabaseStorage()) {
+    app.get('/uploads/:name', (req, res, next) => {
+      const name = objectKeyFromPath(req.params.name);
+      if (!name) return res.status(400).type('text/plain; charset=utf-8').send('ชื่อไฟล์ไม่ถูกต้อง');
+      signedUrlFor(name, 60)
+        .then((url) => {
+          res.setHeader('Cache-Control', 'private, no-store');
+          res.redirect(302, url);
+        })
+        .catch(next);
+    });
+  } else {
+    // โหมดในเครื่อง: เสิร์ฟจากโฟลเดอร์ uploads/ ตามปกติ
+    app.use('/uploads', express.static(UPLOAD_DIR));
+  }
 
   // ที่อยู่เดิมของหน้าแนะนำ — ส่งต่อถาวรมาที่หน้าแรก กันเนื้อหาซ้ำสองที่
   app.get('/welcome', (_req, res) => res.redirect(301, '/'));

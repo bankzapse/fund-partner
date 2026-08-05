@@ -2,6 +2,7 @@ import { all, get, run, insert, tx, nextCounter, FREE_PAY_CATEGORY } from '../db
 import { assertNonNegative, assertPositive, formatBaht } from '../lib/money.js';
 import { today, nowISO, isDateStr, addDays, addMonths } from '../lib/time.js';
 import { audit } from '../lib/audit.js';
+import { toServePath } from '../lib/storage.js';
 
 export class PaymentError extends Error {
   constructor(message) {
@@ -417,7 +418,7 @@ export async function listPayments(filter = {}) {
   if (!filter.includeVoid) where.push('p.is_void = 0');
   params.limit = filter.limit ?? 200;
 
-  return await all(
+  const rows = await all(
     `SELECT p.*, c.contract_no, d.full_name AS debtor_name, d.code AS debtor_code,
             u.full_name AS received_by_name
      FROM payments p
@@ -429,6 +430,8 @@ export async function listPayments(filter = {}) {
      LIMIT :limit`,
     params,
   );
+  // ให้หลักฐานการชำระชี้กลับมาที่เส้นทาง /uploads ที่ตรวจสิทธิ์ก่อนเสมอ
+  return rows.map((p) => (p.proof_path ? { ...p, proof_path: toServePath(p.proof_path) } : p));
 }
 
 /**

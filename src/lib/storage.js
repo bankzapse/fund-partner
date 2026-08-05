@@ -52,7 +52,10 @@ function parseDataUrl(dataUrl) {
 
 /**
  * บันทึกไฟล์แนบ คืนค่า { path, mime, size }
- * path เป็น URL ที่เปิดดูได้ทันที
+ *
+ * path ที่เก็บลงฐานข้อมูลเป็น "/uploads/<ชื่อไฟล์>" เสมอ ทั้งโหมดในเครื่องและ Supabase
+ * ไม่เก็บ URL ตรงของ Supabase อีกต่อไป เพราะ URL แบบ public เปิดดูได้โดยไม่ต้องล็อกอิน
+ * เวลาเปิดดูจริงจะผ่านเส้นทาง /uploads ที่ตรวจสิทธิ์ก่อน แล้วค่อยออก signed URL อายุสั้นให้
  */
 export async function saveDataUrl(dataUrl, prefix = 'file') {
   if (!dataUrl) return null;
@@ -66,7 +69,7 @@ export async function saveDataUrl(dataUrl, prefix = 'file') {
   }
 
   const base = process.env.SUPABASE_URL.replace(/\/$/, '');
-  const res = await fetch(`${base}/storage/v1/object/${BUCKET}/${name}`, {
+  const res = await fetch(`${base}/storage/v1/object/${BUCKET}/${encodeURIComponent(name)}`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
@@ -84,9 +87,55 @@ export async function saveDataUrl(dataUrl, prefix = 'file') {
     );
   }
 
-  return {
-    path: `${base}/storage/v1/object/public/${BUCKET}/${name}`,
-    mime,
-    size: buf.length,
-  };
+  // เก็บแค่เส้นทางภายใน ไม่เก็บ URL ตรงของ bucket
+  return { path: `/uploads/${name}`, mime, size: buf.length };
+}
+
+/**
+ * แยก "ชื่อไฟล์" ออกจากเส้นทางที่เก็บไว้ รองรับทั้งของใหม่ (/uploads/x)
+ * และของเก่าที่เคยเก็บเป็น URL เต็มของ Supabase (.../object/public/<bucket>/x)
+ * กันชื่อที่มี path traversal (.. หรือ /) ไม่ให้หลุดออกไป
+ */
+export function objectKeyFromPath(stored) {
+  if (!stored) return null;
+  const s = String(stored).split('?')[0]; // ตัด query (เผื่อ token) ทิ้ง
+  const name = s.slice(s.lastIndexOf('/') + 1);
+  if (!name || name.includes('..') || name.includes('/') || name.includes('\\')) return null;
+  return name;
+}
+
+/**
+ * ทำให้ค่าที่เก็บในฐานข้อมูลชี้กลับมาที่เส้นทาง /uploads ของเราเสมอ
+ * ใช้ตอนส่งข้อมูลออก API เพื่อว่าแม้ข้อมูลเก่าจะเป็น URL public ตรง ๆ
+ * เบราว์เซอร์ก็จะเรียกผ่านด่านล็อกอินของเราแทนการยิงตรงไป bucket
+ */
+export function toServePath(stored) {
+  const name = objectKeyFromPath(stored);
+  return name ? `/uploads/${name}` : stored;
+}
+
+/**
+ * ขอ signed URL อายุสั้นจาก Supabase สำหรับเปิดดูไฟล์ในโหมด production
+ * ผู้เรียกต้องผ่านการตรวจสิทธิ์มาก่อนแล้วเท่านั้น
+ */
+export async function signedUrlFor(name, expiresIn = 60) {
+  const base = process.env.SUPABASE_URL.replace(/\/$/, '');
+  const res = await fetch(`${base}/storage/v1/object/sign/${BUCKET}/${encodeURIComponent(name)}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ expiresIn }),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw Object.assign(
+      new Error(`ออก signed URL ไม่สำเร็จ (${res.status}) ${detail.slice(0, 200)}`),
+      { status: 502 },
+    );
+  }
+  const body = await res.json();
+  // signedURL ที่ได้เป็นเส้นทางสัมพัทธ์ เช่น /object/sign/<bucket>/<name>?token=...
+  return `${base}/storage/v1${body.signedURL || body.signedUrl}`;
 }

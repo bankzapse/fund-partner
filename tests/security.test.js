@@ -377,6 +377,34 @@ describe('ความปลอดภัย: ช่องโหว่ที่�
     assert.equal(r.headers.get('x-content-type-options'), 'nosniff');
   });
 
+  test('เส้นทางไฟล์แนบถูกแปลงกลับมาที่ /uploads เสมอ (กัน bypass ไป bucket public)', async () => {
+    const { objectKeyFromPath, toServePath } = await import('../src/lib/storage.js');
+    // ของใหม่และของเก่า (URL public เต็ม) ต้องได้ชื่อไฟล์เดียวกัน
+    assert.equal(objectKeyFromPath('/uploads/receipt-1-abc.jpg'), 'receipt-1-abc.jpg');
+    assert.equal(
+      objectKeyFromPath('https://x.supabase.co/storage/v1/object/public/fund-partner/receipt-1-abc.jpg'),
+      'receipt-1-abc.jpg',
+    );
+    // ข้อมูลเก่าแบบ URL public ต้องถูกดึงกลับมาเป็นเส้นทางภายในที่ผ่านด่านล็อกอิน
+    assert.equal(
+      toServePath('https://x.supabase.co/storage/v1/object/public/fund-partner/receipt-1-abc.jpg'),
+      '/uploads/receipt-1-abc.jpg',
+    );
+    // ชื่อที่พยายามหนีออกนอกโฟลเดอร์ต้องถูกปฏิเสธ
+    for (const bad of ['/uploads/..', 'a\\..\\..\\x', '', null]) {
+      assert.equal(objectKeyFromPath(bad), null, `ต้องปฏิเสธ: ${JSON.stringify(bad)}`);
+    }
+  });
+
+  test('เอกสารลูกหนี้ที่คืนจาก API ชี้มาที่ /uploads (ผ่านด่านล็อกอิน)', async () => {
+    const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    await api('owner', 'POST', `/api/debtors/${debtorA}/documents`, { data_url: PNG, kind: 'idcard' });
+    const detail = await api('owner', 'GET', `/api/debtors/${debtorA}`);
+    const doc = detail.body.documents[0];
+    assert.match(doc.file_path, /^\/uploads\//, 'ต้องเป็นเส้นทางภายใน ไม่ใช่ URL ตรงของ bucket');
+    assert.ok(!/supabase|object\/public/.test(doc.file_path), 'ต้องไม่หลุด URL public');
+  });
+
   test('CSV export ไม่ให้ค่าที่ขึ้นต้นด้วย = + - @ กลายเป็นสูตร Excel', async () => {
     // สร้างลูกหนี้ชื่อขึ้นต้นด้วย = แล้วส่งออก CSV รายชื่อลูกหนี้
     await api('owner', 'POST', '/api/debtors', { full_name: '=SUM(1+1)*cmd|calc' });

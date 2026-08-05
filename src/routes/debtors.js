@@ -13,6 +13,7 @@ import {
   intParam,
   sendCsv,
 } from './_helpers.js';
+import { toServePath } from '../lib/storage.js';
 
 const router = Router();
 
@@ -116,10 +117,10 @@ router.get(
       debtor,
       contracts,
       payments: await listPayments({ debtorId: id, includeVoid: true, limit: 300 }),
-      documents: await all(
+      documents: (await all(
         `SELECT * FROM debtor_documents WHERE debtor_id = :id ORDER BY id DESC`,
         { id },
-      ),
+      )).map((d) => ({ ...d, file_path: toServePath(d.file_path) })),
       audit: await auditTrail({ entity: 'debtor', entityId: id, limit: 50 }),
     });
   }),
