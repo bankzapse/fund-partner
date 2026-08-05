@@ -10,6 +10,8 @@ import { permissionSummary } from './lib/permissions.js';
 import { renderLanding } from './lib/landing.js';
 import { publicUser } from './lib/auth.js';
 import { usingSupabaseStorage, signedUrlFor, objectKeyFromPath } from './lib/storage.js';
+import { clientIp } from './lib/client-ip.js';
+import { rateLimit } from './lib/rate-limit.js';
 
 import authRoutes from './routes/auth.js';
 import debtorRoutes from './routes/debtors.js';
@@ -67,13 +69,23 @@ export async function createApp() {
   // ผูกผู้ใช้ปัจจุบันเข้ากับ request
   app.use((req, _res, next) => {
     const token = req.cookies[COOKIE_NAME];
-    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress;
+    const ip = clientIp(req);
     userFromToken(token)
       .then((user) => {
         req.ctx = { user, token, ip };
         next();
       })
       .catch(next);
+  });
+
+  // เพดานกันยิงถล่ม API แบบหยาบ (รวมถึงหน้าเข้าสู่ระบบ) — ก่อนถึงเส้นทางใด ๆ ใต้ /api
+  app.use('/api', (req, res, next) => {
+    const { ok, retryAfter } = rateLimit(req.ctx.ip);
+    if (!ok) {
+      res.setHeader('Retry-After', String(retryAfter));
+      return res.status(429).json({ error: 'มีการเรียกใช้งานถี่เกินไป กรุณารอสักครู่แล้วลองใหม่' });
+    }
+    next();
   });
 
   app.use('/api/auth', authRoutes);

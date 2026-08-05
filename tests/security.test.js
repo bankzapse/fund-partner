@@ -405,6 +405,54 @@ describe('ความปลอดภัย: ช่องโหว่ที่�
     assert.ok(!/supabase|object\/public/.test(doc.file_path), 'ต้องไม่หลุด URL public');
   });
 
+  test('ตั้งรหัสผ่านที่สั้น/เดาง่ายไม่ได้ (นโยบายรหัสผ่าน)', async () => {
+    // ผ่าน API สร้างผู้ใช้ (เจ้าของ) — รหัสอ่อนต้องถูกปฏิเสธก่อนบันทึก
+    for (const weak of ['1234567', 'password', 'aaaaaaaa', '12345678']) {
+      const r = await api('owner', 'POST', '/api/admin/users',
+        { username: `try_${weak}`, password: weak, role: 'collector', full_name: 'x' });
+      assert.equal(r.status, 400, `รหัส "${weak}" ต้องถูกปฏิเสธ`);
+      assert.equal(await get(`SELECT id FROM users WHERE username = :u`, { u: `try_${weak}` }), null);
+    }
+    // รหัสที่ยาวพอและไม่เดาง่ายต้องผ่าน
+    const ok = await api('owner', 'POST', '/api/admin/users',
+      { username: 'goodpw', password: 'Delta#88x', role: 'collector', full_name: 'x' });
+    assert.equal(ok.status, 201);
+  });
+
+  test('เปลี่ยนรหัสผ่านตัวเองเป็นรหัสอ่อนไม่ได้', async () => {
+    const r = await api('owner', 'POST', '/api/auth/change-password',
+      { current_password: 'Owner#Pass1', new_password: 'short1' });
+    assert.equal(r.status, 400);
+  });
+
+  test('หา IP ผู้เรียกจากค่าที่ปลอมยาก ไม่ใช่ค่าซ้ายสุดของ X-Forwarded-For', async () => {
+    const { clientIp } = await import('../src/lib/client-ip.js');
+    // ผู้เรียกยัด IP ปลอมไว้ซ้ายสุด แต่ proxy ที่เชื่อถือได้ต่อ IP จริงไว้ขวาสุด
+    assert.equal(
+      clientIp({ headers: { 'x-forwarded-for': '1.1.1.1, 203.0.113.9' }, socket: {} }),
+      '203.0.113.9',
+    );
+    // ถ้ามี x-real-ip (Vercel เติมให้) ต้องใช้ตัวนั้นก่อน
+    assert.equal(
+      clientIp({ headers: { 'x-real-ip': '203.0.113.5', 'x-forwarded-for': '9.9.9.9' }, socket: {} }),
+      '203.0.113.5',
+    );
+    // ไม่มี proxy — ใช้ที่อยู่ปลายทางของ socket
+    assert.equal(clientIp({ headers: {}, socket: { remoteAddress: '127.0.0.1' } }), '127.0.0.1');
+  });
+
+  test('เพดานกันยิงถล่ม API คืน 429 เมื่อเกินจำนวนในหน้าต่างเวลา', async () => {
+    const { rateLimit, _resetRateLimit } = await import('../src/lib/rate-limit.js');
+    _resetRateLimit();
+    const ip = '198.51.100.7';
+    for (let i = 0; i < 3; i++) assert.equal(rateLimit(ip, { limit: 3 }).ok, true);
+    const blocked = rateLimit(ip, { limit: 3 });
+    assert.equal(blocked.ok, false, 'คำขอที่ 4 ต้องถูกปฏิเสธ');
+    assert.ok(blocked.retryAfter > 0, 'ต้องบอกให้รอกี่วินาที');
+    // IP อื่นไม่โดนผลกระทบ
+    assert.equal(rateLimit('198.51.100.8', { limit: 3 }).ok, true);
+  });
+
   test('CSV export ไม่ให้ค่าที่ขึ้นต้นด้วย = + - @ กลายเป็นสูตร Excel', async () => {
     // สร้างลูกหนี้ชื่อขึ้นต้นด้วย = แล้วส่งออก CSV รายชื่อลูกหนี้
     await api('owner', 'POST', '/api/debtors', { full_name: '=SUM(1+1)*cmd|calc' });

@@ -19,11 +19,27 @@ const SCOPE_LABEL = {
   ip: 'IP',
 };
 
+// รหัสผ่านยอดฮิตที่ถูกเดาเป็นอันดับต้น ๆ — ห้ามใช้ แม้จะยาวพอ
+// (ระบบนี้เก็บข้อมูลการเงินและสำเนาบัตรประชาชน จึงต้องกันรหัสที่เดาง่ายไว้ก่อน)
+const WEAK_PASSWORDS = new Set([
+  '12345678', '123456789', '1234567890', '87654321', 'password', 'password1',
+  'passw0rd', 'qwertyui', 'qwerty123', 'iloveyou', 'abc12345', 'admin123',
+  'letmein1', 'welcome1', 'changeme', 'p@ssw0rd', '11111111', '00000000',
+]);
+
 export function hashPassword(plain) {
-  if (!plain || String(plain).length < 6) {
-    throw Object.assign(new Error('รหัสผ่านต้องยาวอย่างน้อย 6 ตัวอักษร'), { status: 400 });
+  const s = String(plain ?? '');
+  if (s.length < 8) {
+    throw Object.assign(new Error('รหัสผ่านต้องยาวอย่างน้อย 8 ตัวอักษร'), { status: 400 });
   }
-  return bcrypt.hashSync(String(plain), 10); // ข้อ 15: ไม่เก็บรหัสผ่านแบบอ่านได้
+  // ตัวอักษรซ้ำตัวเดียวทั้งเส้น เช่น aaaaaaaa เดาง่ายพอ ๆ กับรหัสสั้น
+  if (/^(.)\1+$/.test(s)) {
+    throw Object.assign(new Error('รหัสผ่านต้องไม่ใช่ตัวอักษรเดียวซ้ำกันทั้งหมด'), { status: 400 });
+  }
+  if (WEAK_PASSWORDS.has(s.toLowerCase())) {
+    throw Object.assign(new Error('รหัสผ่านนี้เดาง่ายเกินไป กรุณาตั้งรหัสอื่น'), { status: 400 });
+  }
+  return bcrypt.hashSync(s, 10); // ข้อ 15: ไม่เก็บรหัสผ่านแบบอ่านได้
 }
 
 export function verifyPassword(plain, hash) {
