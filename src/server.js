@@ -4,7 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { mkdirSync } from 'node:fs';
 import { ROOT, PUBLIC_DIR, UPLOAD_DIR } from './lib/paths.js';
 
-import { db, getSettingInt, isServerless } from './db/index.js';
+import { db, get, getSettingInt, isServerless } from './db/index.js';
+import { nowISO } from './lib/time.js';
 import { COOKIE_NAME, userFromToken, purgeSessions } from './lib/auth.js';
 import { permissionSummary } from './lib/permissions.js';
 import { renderLanding } from './lib/landing.js';
@@ -48,6 +49,21 @@ export async function createApp() {
         "object-src 'none'; base-uri 'self'; frame-ancestors 'self'; form-action 'self'",
     );
     next();
+  });
+
+  // ตรวจสุขภาพระบบสำหรับ monitoring — ไม่ต้องล็อกอิน และไม่เปิดเผยรายละเอียดภายใน
+  // เช็คว่าเชื่อมฐานข้อมูลได้จริง ถ้าไม่ได้คืน 503 เพื่อให้ตัว monitor จับความผิดปกติได้
+  // วางไว้ก่อนตัวแยกคุกกี้/ผูกผู้ใช้ เพื่อให้เบาและไม่พึ่งพาส่วนอื่น
+  app.get('/healthz', (_req, res) => {
+    get('SELECT 1 AS ok')
+      .then(() => {
+        res.setHeader('Cache-Control', 'no-store');
+        res.json({ status: 'ok', db: 'ok', time: nowISO() });
+      })
+      .catch(() => {
+        res.setHeader('Cache-Control', 'no-store');
+        res.status(503).json({ status: 'degraded', db: 'error', time: nowISO() });
+      });
   });
 
   app.use(express.json({ limit: '12mb' })); // รองรับแนบรูปแบบ base64
