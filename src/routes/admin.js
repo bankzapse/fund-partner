@@ -10,6 +10,7 @@ import { wrap, need, intParam } from './_helpers.js';
 import { lockedAccounts, unlockUser } from '../lib/login-guard.js';
 import { reset2FA } from '../lib/twofactor.js';
 import { docFeeBalances, docFeeDetail, recordDocFeePayout } from '../domain/docfee.js';
+import { listHolidays, addHoliday, removeHoliday } from '../domain/holidays.js';
 
 const router = Router();
 
@@ -367,6 +368,43 @@ router.post(
       req.ctx,
     );
     res.status(201).json({ entry });
+  }),
+);
+
+// ---- วันหยุดส่ง (สเปกข้อ 23) -------------------------------------------------
+// ประกาศได้ทั้งระบบ / เฉพาะโซน / เฉพาะสัญญา — งวดค้างถูกเลื่อนออกไปทันที
+
+router.get(
+  '/holidays',
+  need('settings_manage'),
+  wrap(async (_req, res) => {
+    res.json({ items: await listHolidays() });
+  }),
+);
+
+router.post(
+  '/holidays',
+  need('settings_manage'),
+  wrap(async (req, res) => {
+    const result = await addHoliday(
+      {
+        holidayDate: req.body?.holiday_date,
+        scope: req.body?.scope ?? 'all',
+        employeeId: intParam(req.body?.employee_id, null),
+        contractId: intParam(req.body?.contract_id, null),
+        name: req.body?.name,
+      },
+      req.ctx,
+    );
+    res.status(201).json(result);
+  }),
+);
+
+router.post(
+  '/holidays/:id/delete',
+  need('settings_manage'),
+  wrap(async (req, res) => {
+    res.json({ removed: await removeHoliday(intParam(req.params.id), req.ctx) });
   }),
 );
 

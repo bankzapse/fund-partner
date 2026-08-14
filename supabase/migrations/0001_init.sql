@@ -324,6 +324,21 @@ ALTER TABLE contracts ADD COLUMN IF NOT EXISTS total_due BIGINT NOT NULL DEFAULT
 -- เก็บไว้เพื่อตรวจสอบย้อนหลังได้ว่ารายได้ที่รับรู้ตอนรียอดมาจากไหน
 ALTER TABLE contract_links ADD COLUMN IF NOT EXISTS carried_interest BIGINT NOT NULL DEFAULT 0;
 
+-- 13.14 holidays (สเปกข้อ 23) --------------------------------------------------
+-- วันหยุดส่ง: ทั้งระบบ / เฉพาะโซน (พนักงาน) / เฉพาะสัญญา
+-- ในวันหยุด ไม่ถือว่าขาดส่ง ไม่ขึ้นค้าง และตารางงวดถูกเลื่อนออกไป
+CREATE TABLE IF NOT EXISTS holidays (
+  id           INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  holiday_date TEXT    NOT NULL,
+  scope        TEXT    NOT NULL DEFAULT 'all' CHECK (scope IN ('all','employee','contract')),
+  employee_id  INTEGER REFERENCES employees(id),
+  contract_id  INTEGER REFERENCES contracts(id),
+  name         TEXT    NOT NULL,
+  created_by   INTEGER REFERENCES users(id),
+  created_at   TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_holidays_date ON holidays(holiday_date);
+
 -- อัตราค่าแรง/ค่าน้ำมันรายพนักงาน (สเปกข้อ 28, 30-31)
 ALTER TABLE employees ADD COLUMN IF NOT EXISTS wage_amount BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE employees ADD COLUMN IF NOT EXISTS wage_period TEXT NOT NULL DEFAULT 'daily'

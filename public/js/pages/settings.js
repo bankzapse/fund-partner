@@ -8,16 +8,19 @@ export async function renderSettings() {
   const body = el('div', {});
 
   async function load() {
-    const [{ settings }, approvals, audit, access, backups] = await Promise.all([
+    const [{ settings }, approvals, audit, access, backups, holidays, employees] = await Promise.all([
       api.get('/api/admin/settings'),
       api.get('/api/admin/approvals?status=pending'),
       api.get('/api/admin/audit?limit=100'),
       api.get('/api/admin/access-log?limit=100').catch(() => ({ items: [] })),
       api.get('/api/admin/backups').catch(() => ({ items: [] })),
+      api.get('/api/admin/holidays').catch(() => ({ items: [] })),
+      api.get('/api/admin/employees').catch(() => ({ items: [] })),
     ]);
     state.settings = settings;
     clear(body).append(
       settingsCard(settings, load),
+      holidaysCard(holidays.items, employees.items, load),
       approvalsCard(approvals.items, load),
       backupCard(backups.items, load),
       auditCard(audit.items),
@@ -326,6 +329,84 @@ function backupCard(items, reload) {
       ['ไฟล์สำรอง'],
       items.slice(0, 10).map((f) => el('tr', {}, el('td', { class: 'small mono' }, f))),
       'ยังไม่มีไฟล์สำรอง',
+    ),
+  );
+}
+
+/**
+ * วันหยุดส่ง (สเปกข้อ 23) — ทั้งระบบ / เฉพาะโซน / เฉพาะสัญญา
+ * ประกาศแล้วงวดค้างถูกเลื่อนออกไปทันที ลบประกาศไม่ดึงตารางกลับ
+ */
+function holidaysCard(items, employees, onDone) {
+  const date = el('input', { type: 'date' });
+  const name = el('input', { placeholder: 'เช่น วันสงกรานต์' });
+  const scopeSel = el('select', {},
+    el('option', { value: 'all' }, 'ทั้งระบบ'),
+    el('option', { value: 'employee' }, 'เฉพาะโซน/พนักงาน'),
+    el('option', { value: 'contract' }, 'เฉพาะสัญญา (กรอกเลข id)'),
+  );
+  const empSel = el('select', { style: 'display:none' },
+    (employees ?? []).filter((e) => e.is_active).map((e) =>
+      el('option', { value: e.id }, `โซน ${e.code} — ${e.full_name}`)));
+  const contractInput = el('input', { type: 'number', placeholder: 'id สัญญา', style: 'display:none' });
+  scopeSel.addEventListener('change', () => {
+    empSel.style.display = scopeSel.value === 'employee' ? '' : 'none';
+    contractInput.style.display = scopeSel.value === 'contract' ? '' : 'none';
+  });
+
+  const add = el('button', {
+    class: 'btn sm',
+    onclick: async () => {
+      try {
+        const r = await api.post('/api/admin/holidays', {
+          holiday_date: date.value,
+          name: name.value,
+          scope: scopeSel.value,
+          employee_id: scopeSel.value === 'employee' ? Number(empSel.value) : null,
+          contract_id: scopeSel.value === 'contract' ? Number(contractInput.value) : null,
+        });
+        toast(`ประกาศวันหยุดแล้ว เลื่อนงวดค้าง ${r.shifted_daily + r.shifted_monthly} งวด`, 'ok');
+        onDone();
+      } catch (err) { toastError(err); }
+    },
+  }, 'ประกาศวันหยุด');
+
+  const SCOPE_LABEL = { all: 'ทั้งระบบ', employee: 'เฉพาะโซน', contract: 'เฉพาะสัญญา' };
+  return el(
+    'div',
+    { class: 'card' },
+    el('h3', {}, 'วันหยุดส่ง'),
+    el('div', { class: 'hint' },
+      'วันหยุดไม่ถือว่าขาดส่ง ไม่ขึ้นค้าง — ตารางงวดของสัญญาที่เปิดอยู่ถูกเลื่อนออกไปทันทีที่ประกาศ ' +
+      'และสัญญาใหม่จะข้ามวันหยุดที่ประกาศไว้แล้วโดยอัตโนมัติ'),
+    el('div', { class: 'grid k2' }, field('วันที่', date), field('ชื่อวันหยุด', name)),
+    el('div', { class: 'grid k2' }, field('ขอบเขต', scopeSel),
+      el('div', { class: 'field' }, el('label', {}, 'โซน / สัญญา'), empSel, contractInput)),
+    el('div', { class: 'mt' }, add),
+    table(
+      ['วันที่', 'ชื่อ', 'ขอบเขต', ''],
+      (items ?? []).map((h) =>
+        el('tr', {},
+          el('td', { class: 'small nowrap' }, thaiDate(h.holiday_date)),
+          el('td', {}, h.name),
+          el('td', { class: 'small' },
+            h.scope === 'employee' ? `โซน ${h.employee_code ?? ''} ${h.employee_name ?? ''}`
+            : h.scope === 'contract' ? `สัญญา ${h.contract_no ?? h.contract_id}`
+            : SCOPE_LABEL[h.scope]),
+          el('td', {}, el('button', {
+            class: 'btn ghost sm',
+            onclick: async () => {
+              if (!confirm(`ลบประกาศวันหยุด ${h.name}? (ตารางงวดที่เลื่อนไปแล้วจะคงเดิม)`)) return;
+              try {
+                await api.post(`/api/admin/holidays/${h.id}/delete`);
+                toast('ลบประกาศแล้ว', 'ok');
+                onDone();
+              } catch (err) { toastError(err); }
+            },
+          }, 'ลบ')),
+        ),
+      ),
+      'ยังไม่มีวันหยุดที่ประกาศไว้',
     ),
   );
 }

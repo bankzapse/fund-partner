@@ -282,7 +282,12 @@ async function refreshContractStatus(contractId, ctx) {
      WHERE contract_id = :cid AND (interest_paid < interest_due OR principal_paid < principal_due)`,
     { cid: contractId },
   );
-  const done = Number(openRow.n) === 0 && c.principal_remaining === 0;
+  // ดอกลอย: ตารางงวดเป็นแค่ปฏิทินเก็บดอก ไม่ใช่ภาระหนี้ — ต้นหมดคือปิดสัญญา (สเปกข้อ 20)
+  // ประเภทอื่น: ต้องทั้งงวดครบและเงินต้นหมด
+  const done =
+    c.type === 'floating'
+      ? c.principal_remaining === 0
+      : Number(openRow.n) === 0 && c.principal_remaining === 0;
   const nextStatus = done ? 'completed' : 'active';
   if (nextStatus !== c.status) {
     await run(

@@ -184,9 +184,12 @@ export async function renderNewContract() {
 
   async function refresh() {
     syncMode();
-    // ดอกลอย: ค่างวด = ดอกเบี้ยต่อรอบ
+    // ดอกลอย: ค่างวด = ดอกเบี้ยต่อวัน และปฏิทินเก็บดอกล่วงหน้า 1 ปี (ไม่ใช่วันครบสัญญา)
     installment.disabled = typeSel.value === 'floating';
-    if (typeSel.value === 'floating') installment.value = interest.value;
+    if (typeSel.value === 'floating') {
+      installment.value = interest.value;
+      if (Number(periods.value) === 24) periods.value = '365';
+    }
 
     if (!debtorSel.value) {
       clear(previewBox).append(el('div', { class: 'empty' }, 'เลือกลูกหนี้เพื่อดูตัวอย่างการคำนวณ'));

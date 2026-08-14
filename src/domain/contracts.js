@@ -16,11 +16,14 @@ import { assertNonNegative, assertPositive, formatBaht } from '../lib/money.js';
 import { today, nowISO, addDays, addMonths, isDateStr } from '../lib/time.js';
 import { audit } from '../lib/audit.js';
 import { recordFirstInstallment } from './payments.js';
+import { holidayDatesFor } from './holidays.js';
 
 export const CONTRACT_TYPES = {
   daily24: { label: 'รายวัน 24 งวด', unit: 'day' },
   monthly: { label: 'รายเดือน', unit: 'month' },
-  floating: { label: 'ดอกลอย', unit: 'month' },
+  // ดอกลอยเป็นบาท/วัน (สเปกข้อ 17) — ตารางที่สร้างเป็นแค่ปฏิทินเก็บดอกล่วงหน้า
+  // ไม่ใช่วันครบสัญญา: สัญญาปิดเมื่อเงินต้นหมดเท่านั้น (ข้อ 18/20)
+  floating: { label: 'ดอกลอย (บาท/วัน)', unit: 'day' },
 };
 
 export class BusinessError extends Error {
@@ -67,7 +70,31 @@ function spreadExact(total, weights) {
  * ถ้าเก็บเป็นเศษสตางค์ พนักงานจะปัดเอง แล้วยอดในระบบกับเงินสดจริงจะไม่ตรงกัน
  * เศษที่เหลือทั้งหมดไปรวมที่งวดสุดท้าย
  */
-export function buildFlatSchedule({ type, startDate, numInstallments, principalAmount, interestRateBp }) {
+/**
+ * ชุดวันครบกำหนดของตารางงวด แบบข้ามวันหยุด (สเปกข้อ 23: วันหยุดไม่สร้างงวด)
+ *   รายวัน: วันถัดไปเรื่อย ๆ ข้ามทุกวันที่อยู่ในเซตวันหยุด (ตารางเลื่อนออกไปทั้งแผง)
+ *   รายเดือน: ยึดรอบเดือนเดิม ถ้าตรงวันหยุดเลื่อนวันนั้น +1 จนพ้น
+ */
+function dueDatesFor(unit, startDate, count, skipDates = null) {
+  const out = [];
+  if (unit === 'day') {
+    let cursor = startDate;
+    for (let i = 0; i < count; i++) {
+      if (i > 0) cursor = addDays(cursor, 1);
+      while (skipDates?.has(cursor)) cursor = addDays(cursor, 1);
+      out.push(cursor);
+    }
+  } else {
+    for (let i = 0; i < count; i++) {
+      let d = addMonths(startDate, i);
+      while (skipDates?.has(d)) d = addDays(d, 1);
+      out.push(d);
+    }
+  }
+  return out;
+}
+
+export function buildFlatSchedule({ type, startDate, numInstallments, principalAmount, interestRateBp, skipDates = null }) {
   const unit = CONTRACT_TYPES[type].unit;
   const n = numInstallments;
   // ปัดดอกเบี้ยเป็น "บาทถ้วน" ไม่ใช่แค่สตางค์
@@ -94,9 +121,10 @@ export function buildFlatSchedule({ type, startDate, numInstallments, principalA
   // แบ่งดอก/ต้นในแต่ละงวดตามสัดส่วนของค่างวด ผลรวมทั้งสองฝั่งจึงตรงเป๊ะ
   const interests = spreadExact(interestTotal, dues);
 
+  const dates = dueDatesFor(unit, startDate, n, skipDates);
   const rows = dues.map((due, i) => ({
     seq: i + 1,
-    due_date: unit === 'day' ? addDays(startDate, i) : addMonths(startDate, i),
+    due_date: dates[i],
     interest_due: interests[i],
     principal_due: due - interests[i],
     due_amount: due,
@@ -117,7 +145,7 @@ export function buildFlatSchedule({ type, startDate, numInstallments, principalA
  *
  * ใช้กติกาปัดบาทถ้วนเดียวกับโหมดเหมารวม: ค่างวดบาทถ้วน เศษไปงวดสุดท้าย
  */
-export function buildDeductUpfrontSchedule({ type, startDate, numInstallments, principalAmount, interestRateBp }) {
+export function buildDeductUpfrontSchedule({ type, startDate, numInstallments, principalAmount, interestRateBp, skipDates = null }) {
   const unit = CONTRACT_TYPES[type].unit;
   const n = numInstallments;
   // ดอกหักก่อน ปัดเป็นบาทถ้วน (เหตุผลเดียวกับโหมดเหมารวม — เก็บเงินสดหน้างานจริง)
@@ -131,9 +159,10 @@ export function buildDeductUpfrontSchedule({ type, startDate, numInstallments, p
   const dues = Array(n).fill(per);
   dues[n - 1] = totalDue - per * (n - 1);
 
+  const dates = dueDatesFor(unit, startDate, n, skipDates);
   const rows = dues.map((due, i) => ({
     seq: i + 1,
-    due_date: unit === 'day' ? addDays(startDate, i) : addMonths(startDate, i),
+    due_date: dates[i],
     interest_due: 0, // ดอกรับรู้ไปแล้ววันเปิดสัญญา งวดเป็นเงินต้นล้วน
     principal_due: due,
     due_amount: due,
@@ -149,14 +178,15 @@ export function buildSchedule({
   installmentAmount,
   interestPerInst,
   principalAmount,
+  skipDates = null,
 }) {
   const unit = CONTRACT_TYPES[type].unit;
   const rows = [];
   let principalLeft = principalAmount;
+  const dates = dueDatesFor(unit, startDate, numInstallments, skipDates);
 
   for (let seq = 1; seq <= numInstallments; seq++) {
-    const dueDate =
-      unit === 'day' ? addDays(startDate, seq - 1) : addMonths(startDate, seq - 1);
+    const dueDate = dates[seq - 1];
 
     let interestDue = interestPerInst;
     let principalDue;
@@ -315,10 +345,20 @@ async function normalizeContractInput(input) {
   let numInstallments = Number(input.numInstallments);
 
   if (type === 'daily24' && !numInstallments) numInstallments = 24;
+  // ดอกลอยไม่มีจำนวนงวดตายตัว (ข้อ 18) — สร้างปฏิทินเก็บดอกล่วงหน้า 1 ปี
+  // ถ้าลูกหนี้ยังส่งต่อหลังจากนั้นให้รียอด/ต่อสัญญา สัญญาปิดเมื่อต้นหมดเท่านั้น
+  if (type === 'floating' && !numInstallments) numInstallments = 365;
   if (type === 'floating') installmentAmount = interestPerInst;
   if (!Number.isInteger(numInstallments) || numInstallments < 1 || numInstallments > 600) {
     throw new BusinessError('จำนวนงวดไม่ถูกต้อง');
   }
+
+  // วันหยุดที่ประกาศไว้แล้ว (ทั้งระบบ + โซนของพนักงาน) — ตารางงวดใหม่ข้ามวันเหล่านี้
+  // (สเปกข้อ 23: วันหยุดไม่สร้างงวด) วันหยุดเฉพาะสัญญาไม่มีทางมีอยู่ก่อนสัญญาเกิด
+  const skipDates = await holidayDatesFor({
+    employeeId: input.employeeId ?? null,
+    fromDate: startDate,
+  });
 
   // โหมดที่คิดจากอัตรา % — คำนวณยอดหนี้รวมและค่างวดจากอัตรา ก่อนถึงด่านตรวจค่างวด
   let interestRateBp = 0;
@@ -333,8 +373,8 @@ async function normalizeContractInput(input) {
     }
     const built =
       interestMode === 'flat_total'
-        ? buildFlatSchedule({ type, startDate, numInstallments, principalAmount, interestRateBp })
-        : buildDeductUpfrontSchedule({ type, startDate, numInstallments, principalAmount, interestRateBp });
+        ? buildFlatSchedule({ type, startDate, numInstallments, principalAmount, interestRateBp, skipDates })
+        : buildDeductUpfrontSchedule({ type, startDate, numInstallments, principalAmount, interestRateBp, skipDates });
     installmentAmount = built.installmentAmount;
     // เก็บดอกต่องวดไว้เป็นค่าอ้างอิงเท่านั้น ตารางงวดจริงใช้ค่าที่กระจายแล้วรายงวด
     // (หักดอกก่อน: งวดเป็นเงินต้นล้วน ค่านี้จึงเป็น 0)
@@ -377,6 +417,7 @@ async function normalizeContractInput(input) {
     debtorId: input.debtorId,
     employeeId: input.employeeId ?? null,
     openedByEmployeeId: input.openedByEmployeeId ?? null,
+    skipDates,
     note: input.note ?? null,
   };
 }

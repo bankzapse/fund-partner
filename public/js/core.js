@@ -113,7 +113,7 @@ export const BEHAVIOUR = {
 export const CONTRACT_TYPE = {
   daily24: 'รายวัน 24 งวด',
   monthly: 'รายเดือน',
-  floating: 'ดอกลอย',
+  floating: 'ดอกลอย (บาท/วัน)',
 };
 
 export const INSTALLMENT_STATUS = {
