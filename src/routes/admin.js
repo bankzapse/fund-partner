@@ -5,7 +5,7 @@ import { nowISO } from '../lib/time.js';
 import { audit, auditTrail, accessTrail } from '../lib/audit.js';
 import { ROLES, MATRIX } from '../lib/permissions.js';
 import { voidPayment } from '../domain/payments.js';
-import { reyod } from '../domain/contracts.js';
+import { reyod, cancelContract } from '../domain/contracts.js';
 import { wrap, need, intParam } from './_helpers.js';
 import { lockedAccounts, unlockUser } from '../lib/login-guard.js';
 import { reset2FA } from '../lib/twofactor.js';
@@ -307,6 +307,8 @@ router.post(
         result = await voidPayment({ paymentId: payload.paymentId, reason: payload.reason }, req.ctx);
       } else if (approval.kind === 'reyod') {
         result = await reyod(payload, req.ctx);
+      } else if (approval.kind === 'cancel_contract') {
+        result = await cancelContract(payload, req.ctx);
       }
     }
     await run(

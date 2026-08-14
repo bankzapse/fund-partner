@@ -3,6 +3,7 @@ import { all, get, insert } from '../db/index.js';
 import {
   previewContract,
   createContract,
+  cancelContract,
   getContract,
   listInstallments,
   contractSummary,
@@ -118,6 +119,42 @@ router.get(
       { label: 'ชำระต้นแล้ว', value: (r) => (r.principal_paid / 100).toFixed(2) },
       { label: 'สถานะ', key: 'status' },
     ]);
+  }),
+);
+
+/** ยกเลิกสัญญาที่เปิดผิด — void รายการอัตโนมัติคู่สัญญาทั้งหมด (backlog ข้อ 10) */
+router.post(
+  '/:id/cancel',
+  need('payments_void'),
+  wrap(async (req, res) => {
+    const id = intParam(req.params.id);
+    const reason = req.body?.reason;
+    if (!reason || !String(reason).trim()) {
+      return res.status(400).json({ error: 'ต้องระบุเหตุผลการยกเลิกสัญญา' });
+    }
+    const contract = await getContract(id);
+    if (!contract) return res.status(404).json({ error: 'ไม่พบสัญญา' });
+
+    // ผู้จัดการ: ทำได้แต่ต้องรออนุมัติจากเจ้าของ (ตารางสิทธิ์ payments_void)
+    if (needsApproval(req.ctx.user, 'payments_void')) {
+      const approvalId = await insert(
+        `INSERT INTO approvals (kind, payload, requested_by, requested_at)
+         VALUES ('cancel_contract', :payload, :uid, :now)`,
+        { payload: JSON.stringify({ contractId: id, reason }), uid: req.ctx.user.id, now: nowISO() },
+      );
+      const approval = await get(`SELECT * FROM approvals WHERE id = :id`, { id: approvalId });
+      await audit({
+        userId: req.ctx.user.id,
+        action: 'request_approval',
+        entity: 'approval',
+        entityId: approval.id,
+        after: approval,
+        ip: req.ctx.ip,
+      });
+      return res.status(202).json({ pending_approval: approval });
+    }
+
+    res.json(await cancelContract({ contractId: id, reason }, req.ctx));
   }),
 );
 

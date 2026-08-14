@@ -580,6 +580,116 @@ export async function createContractInTx(input, ctx) {
   return { contract, preview, firstPayment };
 }
 
+/**
+ * ยกเลิกสัญญาที่ "เปิดผิด" (backlog ข้อ 10)
+ *
+ * ล้างรายการอัตโนมัติที่ผูกกับสัญญาทั้งหมดแบบ "ไม่ลบถาวร" (void) เพื่อให้กระแสเงินสด/
+ * รายได้/เงินต้นกลับไปเหมือนไม่เคยเปิดสัญญา:
+ *   - เงินปล่อย (รายจ่าย DISBURSE) → void
+ *   - ค่าทำเอกสาร (doc_fee) + ดอกหักก่อน (upfront) + ดอกรับรู้ตอนปิด/รียอด ฯลฯ (income) → void
+ *   - รายการรับเงินทุกใบ (งวดแรกที่หัก ณ วันทำสัญญา + ที่เก็บมาจริง) → void
+ *   - ล้างยอดชำระของงวดกลับเป็น pending, เงินต้นคงเหลือ = 0, สถานะ = 'cancelled'
+ *
+ * รายงานทุกตัวกรอง is_void = 0 และข้าม status = 'cancelled' อยู่แล้ว → ยอดกลับเข้าที่เอง
+ *
+ * กันพลาด:
+ *   - สัญญาที่ถูกรียอด/เกิดจากการรียอด: ห้าม (ยอดผูกกับอีกสัญญา ย้อนแล้วเงินหายจากรายงาน)
+ *   - รายการในวันที่ปิดยอดแล้ว: ต้องให้เจ้าของเป็นผู้ทำ (เหมือน voidPayment ข้อ 14/15)
+ */
+export async function cancelContract({ contractId, reason }, ctx) {
+  return await tx(async () => {
+    const contract = await get(`SELECT * FROM contracts WHERE id = :id`, { id: contractId });
+    if (!contract) throw new BusinessError('ไม่พบสัญญา');
+    if (contract.status === 'cancelled') throw new BusinessError('สัญญานี้ถูกยกเลิกไปแล้ว');
+    if (contract.status === 'closed_reyod') {
+      throw new BusinessError('สัญญานี้ถูกรียอดไปเป็นสัญญาใหม่แล้ว ยกเลิกไม่ได้ — จัดการที่สัญญาใหม่แทน');
+    }
+    if (!reason || !String(reason).trim()) throw new BusinessError('ต้องระบุเหตุผลการยกเลิกสัญญา');
+
+    // สัญญาที่เชื่อมกับการรียอด (เป็นต้นทางหรือปลายทาง) — ห้ามยกเลิก
+    const link = await get(
+      `SELECT l.from_contract_id, l.to_contract_id,
+              f.contract_no AS from_no, t.contract_no AS to_no
+       FROM contract_links l
+       JOIN contracts f ON f.id = l.from_contract_id
+       JOIN contracts t ON t.id = l.to_contract_id
+       WHERE l.from_contract_id = :id OR l.to_contract_id = :id
+       LIMIT 1`,
+      { id: contractId },
+    );
+    if (link) {
+      const other = link.from_contract_id === contractId ? link.to_no : link.from_no;
+      throw new BusinessError(
+        `สัญญานี้เชื่อมกับการรียอด (คู่กับ ${other}) ยกเลิกไม่ได้ ` +
+          'เพราะยอดที่ยกไป/มาคำนวณจากสัญญานี้ การย้อนกลับจะทำให้เงินต้นค้างบนสัญญาที่ปิดแล้วและหายจากรายงาน',
+      );
+    }
+
+    const payments = await all(
+      `SELECT id, paid_date FROM payments WHERE contract_id = :id AND is_void = 0`,
+      { id: contractId },
+    );
+
+    // กันย้อนเงินในวันที่ปิดยอดแล้วโดยคนที่ไม่ใช่เจ้าของ (เหมือน voidPayment)
+    const dates = new Set(payments.map((p) => p.paid_date));
+    dates.add(contract.start_date); // วันจ่ายเงินปล่อย/ค่าเอกสาร/ดอกหักก่อน
+    for (const d of dates) {
+      const closing = await get(`SELECT id FROM daily_closings WHERE closing_date = :d`, { d });
+      if (closing && ctx?.user?.role !== 'owner') {
+        throw new BusinessError(
+          `มีรายการของสัญญาอยู่ในวันที่ปิดยอดแล้ว (${d}) ต้องให้เจ้าของเป็นผู้ยกเลิกสัญญา`,
+        );
+      }
+    }
+
+    const now = nowISO();
+    const voidReason = `ยกเลิกสัญญา ${contract.contract_no}: ${String(reason).trim()}`;
+
+    // 1) void รายการรับเงินทุกใบ (งวดแรก + ที่เก็บมาจริง)
+    await run(
+      `UPDATE payments SET is_void = 1, void_reason = :r, voided_by = :uid, voided_at = :now
+       WHERE contract_id = :id AND is_void = 0`,
+      { id: contractId, r: voidReason, uid: ctx?.user?.id ?? null, now },
+    );
+    // 2) void รายรับที่ผูกกับสัญญา (ค่าเอกสาร/ดอกหักก่อน/ดอกปิด-รียอด/เงินต้นรับคืน ฯลฯ)
+    await run(
+      `UPDATE income_entries SET is_void = 1, void_reason = :r
+       WHERE contract_id = :id AND is_void = 0`,
+      { id: contractId, r: voidReason },
+    );
+    // 3) void รายจ่ายที่ผูกกับสัญญา (เงินปล่อย)
+    await run(
+      `UPDATE expenses SET is_void = 1, void_reason = :r
+       WHERE contract_id = :id AND is_void = 0`,
+      { id: contractId, r: voidReason },
+    );
+    // 4) ล้างงวด + ปิดสัญญาเป็น 'cancelled'
+    await run(
+      `UPDATE installments SET interest_paid = 0, principal_paid = 0, status = 'pending'
+       WHERE contract_id = :id`,
+      { id: contractId },
+    );
+    await run(
+      `UPDATE contracts SET status = 'cancelled', principal_remaining = 0,
+              closed_at = :now, updated_at = :now WHERE id = :id`,
+      { id: contractId, now },
+    );
+
+    const after = await getContract(contractId);
+    await audit({
+      userId: ctx?.user?.id,
+      action: 'cancel',
+      entity: 'contract',
+      entityId: contractId,
+      before: contract,
+      after,
+      reason,
+      ip: ctx?.ip,
+    });
+    return { contract: after, voided_payments: payments.length };
+  });
+}
+
 export async function getContract(id) {
   return await get(
     `SELECT c.*, d.full_name AS debtor_name, d.code AS debtor_code, d.phone AS debtor_phone,

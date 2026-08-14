@@ -311,6 +311,23 @@ export async function renderContractDetail({ id }) {
           : null,
         el('a', { href: `/api/contracts/${c.id}/schedule.csv`, class: 'btn ghost sm', style: 'text-decoration:none' }, 'ส่งออกตารางงวด'),
         el('button', { class: 'btn ghost sm no-print', onclick: () => window.print() }, 'พิมพ์'),
+        // ยกเลิกสัญญาที่เปิดผิด — ล้างเงินปล่อย/ค่าเอกสาร/ดอกหักก่อน/งวดแรกทั้งหมด (backlog ข้อ 10)
+        !['cancelled', 'closed_reyod'].includes(c.status) && can('payments_void')
+          ? el('button', {
+              class: 'btn danger sm no-print',
+              onclick: () =>
+                confirmWithReason(
+                  `ยกเลิกสัญญา ${c.contract_no}`,
+                  'ใช้กับสัญญาที่เปิดผิดเท่านั้น — ระบบจะย้อนเงินปล่อย ค่าทำเอกสาร ดอกหักก่อน ' +
+                    'งวดแรก และรายการรับเงินทุกใบกลับทั้งหมด (ไม่ลบถาวร เก็บประวัติไว้)',
+                  async (reason) => {
+                    const res = await api.post(`/api/contracts/${c.id}/cancel`, { reason });
+                    toast(res.pending_approval ? 'ส่งคำขออนุมัติให้เจ้าของแล้ว' : 'ยกเลิกสัญญาแล้ว', 'ok');
+                    location.reload();
+                  },
+                ),
+            }, 'ยกเลิกสัญญา')
+          : null,
       ),
     ),
     el(

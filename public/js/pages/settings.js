@@ -255,7 +255,7 @@ function pricingCard(s, reload) {
 }
 
 function approvalsCard(items, reload) {
-  const KIND = { void_payment: 'ยกเลิกรายการรับเงิน', reyod: 'รียอดสัญญา', edit_closed_day: 'แก้ไขวันที่ปิดยอดแล้ว' };
+  const KIND = { void_payment: 'ยกเลิกรายการรับเงิน', reyod: 'รียอดสัญญา', cancel_contract: 'ยกเลิกสัญญา', edit_closed_day: 'แก้ไขวันที่ปิดยอดแล้ว' };
   return el(
     'div',
     { class: 'card' },
