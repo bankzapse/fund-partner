@@ -291,6 +291,17 @@ function openEmployeeForm(employee, users, onDone) {
       users.map((u) => el('option', { value: u.id, selected: employee?.user_id === u.id }, `${u.username} (${ROLE_LABEL[u.role]})`)),
     );
     const active = el('input', { type: 'checkbox', checked: employee ? Boolean(employee.is_active) : true });
+    // อัตราค่าแรง/ค่าน้ำมัน (สเปกข้อ 30-31) — 0 = จ่ายตามจริง/กรอกเอง
+    const wage = el('input', { type: 'number', step: '0.01', inputmode: 'decimal',
+      value: ((employee?.wage_amount ?? 0) / 100).toFixed(2) });
+    const wagePeriod = el('select', {},
+      el('option', { value: 'daily', selected: (employee?.wage_period ?? 'daily') === 'daily' }, 'รายวัน'),
+      el('option', { value: 'monthly', selected: employee?.wage_period === 'monthly' }, 'รายเดือน'));
+    const fuel = el('input', { type: 'number', step: '0.01', inputmode: 'decimal',
+      value: ((employee?.fuel_amount ?? 0) / 100).toFixed(2) });
+    const fuelPeriod = el('select', {},
+      el('option', { value: 'daily', selected: (employee?.fuel_period ?? 'daily') === 'daily' }, 'รายวัน (เหมา)'),
+      el('option', { value: 'monthly', selected: employee?.fuel_period === 'monthly' }, 'รายเดือน'));
 
     const save = el(
       'button',
@@ -304,6 +315,10 @@ function openEmployeeForm(employee, users, onDone) {
             area: area.value.trim() || null,
             user_id: userSel.value ? Number(userSel.value) : null,
             is_active: active.checked,
+            wage_amount: toSatang(wage.value),
+            wage_period: wagePeriod.value,
+            fuel_amount: toSatang(fuel.value),
+            fuel_period: fuelPeriod.value,
           };
           try {
             if (employee) await api.put(`/api/admin/employees/${employee.id}`, body);
@@ -322,11 +337,17 @@ function openEmployeeForm(employee, users, onDone) {
     return el(
       'div',
       {},
-      field('รหัสพนักงาน', code),
+      field('รหัสพนักงาน', code, 'ใช้เป็นรหัสโซนของลูกหนี้ด้วย เช่น รหัส A → ลูกหนี้ A.1, A.2'),
       field('ชื่อ-นามสกุล *', fullName),
       field('เบอร์โทร', phone),
       field('พื้นที่ / เส้นทาง', area),
       field('ผูกกับผู้ใช้ระบบ', userSel, 'จำเป็นสำหรับพนักงานเก็บเงิน เพื่อจำกัดให้เห็นเฉพาะลูกหนี้ของตน'),
+      el('div', { class: 'grid k2' },
+        field('ค่าแรง (บาท)', wage, '0 = จ่ายตามจริง/กรอกเอง'),
+        field('รอบค่าแรง', wagePeriod)),
+      el('div', { class: 'grid k2' },
+        field('ค่าน้ำมัน (บาท)', fuel, '0 = จ่ายตามจริง'),
+        field('รอบค่าน้ำมัน', fuelPeriod)),
       el('label', { class: 'rowline', style: 'margin:.5rem 0' },
         el('span', {}, 'สถานะทำงาน'), el('span', { style: 'flex:none;width:auto' }, active)),
       el('div', { class: 'btn-row mt' }, save, el('button', { class: 'btn ghost', onclick: close }, 'ยกเลิก')),

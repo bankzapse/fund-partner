@@ -9,7 +9,7 @@ import {
   monthlySeries,
   breakdown,
   monthRange,
-  yearRange,
+  yearRange,  employeeDayClose,
 } from '../domain/reports.js';
 import { today } from '../lib/time.js';
 import { wrap, need, scopeEmployeeId, intParam, sendCsv } from './_helpers.js';
@@ -142,6 +142,19 @@ router.get(
 );
 
 /** กำไรขาดทุน (ข้อ 16) — เงินต้นรับคืนไม่ถูกนับเป็นรายได้ (เกณฑ์ข้อ 18) */
+// ปิดยอดพนักงานประจำวัน (สเปกข้อ 32) — แยกรายคน/โซน + ยอดรวม
+router.get(
+  '/employee-closing',
+  need('reports_view'),
+  wrap(async (req, res) => {
+    const date = req.query.date ?? today();
+    // พนักงานเห็นเฉพาะของตัวเอง เจ้าของเลือกดูรายคนหรือดูรวมได้
+    const own = await scopeEmployeeId(req.ctx.user, 'reports_view');
+    const emp = own !== null ? own : intParam(req.query.employee_id, null);
+    res.json(await employeeDayClose(date, emp));
+  }),
+);
+
 router.get(
   '/profit-loss',
   need('profit_view'),

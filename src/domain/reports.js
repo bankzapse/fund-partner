@@ -417,3 +417,115 @@ export async function reopenDay({ date, reason }, ctx) {
 }
 
 export { monthRange, yearRange };
+
+/**
+ * ปิดยอดพนักงานประจำวัน (สเปกข้อ 32) — แต่ละคน/โซนแยกกัน แล้วเจ้าของดูรวมได้
+ *
+ * ต่อพนักงานหนึ่งคนในวันนั้น:
+ *   นำส่งกิจการ  = เงินรับชำระ + จ่ายฟรี (เงินสดที่พนักงานเก็บจากลูกหนี้จริง)
+ *   กิจการต้องจ่าย = ค่าแรงตามอัตรา + ค่าน้ำมันตามอัตรา (รายวัน) + ค่าทำสัญญาที่เกิดวันนั้น
+ *   ยอดสุทธิ     = นำส่ง − ต้องจ่าย
+ */
+export async function employeeDayClose(date, employeeId = null) {
+  const employees = await all(
+    `SELECT * FROM employees WHERE is_active = 1
+     ${employeeId ? 'AND id = :emp' : ''} ORDER BY code`,
+    { emp: employeeId },
+  );
+
+  const rows = [];
+  for (const e of employees) {
+    const [pay, freePay, docFee, expensesPaid, due] = await Promise.all([
+      get(
+        `SELECT
+           COALESCE(SUM(p.amount_paid), 0) AS cash,
+           COALESCE(SUM(CASE WHEN c.type = 'floating' THEN p.interest_amount ELSE 0 END), 0) AS floating_interest,
+           COALESCE(SUM(CASE WHEN c.type = 'floating' THEN p.principal_amount ELSE 0 END), 0) AS principal_cut,
+           COUNT(DISTINCT CASE WHEN p.amount_paid > 0 THEN p.contract_id END) AS contracts_paid
+         FROM payments p JOIN contracts c ON c.id = p.contract_id
+         WHERE p.is_void = 0 AND p.paid_date = :d AND c.employee_id = :emp`,
+        { d: date, emp: e.id },
+      ),
+      get(
+        `SELECT COALESCE(SUM(i.amount), 0) AS v, COUNT(*) AS n
+         FROM income_entries i JOIN contracts c ON c.id = i.contract_id
+         WHERE i.is_void = 0 AND i.entry_date = :d AND i.category = 'จ่ายฟรี/พักงวด'
+           AND c.employee_id = :emp`,
+        { d: date, emp: e.id },
+      ),
+      get(
+        `SELECT COALESCE(SUM(i.amount), 0) AS v
+         FROM income_entries i JOIN contracts c ON c.id = i.contract_id
+         WHERE i.is_void = 0 AND i.entry_date = :d AND i.category = 'doc_fee'
+           AND COALESCE(c.opened_by_employee_id, c.employee_id) = :emp`,
+        { d: date, emp: e.id },
+      ),
+      get(
+        `SELECT
+           COALESCE(SUM(CASE WHEN x.category = 'เงินเดือน/ค่าแรง' THEN x.amount ELSE 0 END), 0) AS wage_paid,
+           COALESCE(SUM(CASE WHEN x.category = 'ค่าน้ำมัน' THEN x.amount ELSE 0 END), 0) AS fuel_paid
+         FROM expenses x
+         WHERE x.is_void = 0 AND x.entry_date = :d AND x.employee_id = :emp`,
+        { d: date, emp: e.id },
+      ),
+      get(
+        `SELECT COUNT(*) AS due_count,
+                COALESCE(SUM(i.due_amount - i.interest_paid - i.principal_paid), 0) AS expected
+         FROM installments i JOIN contracts c ON c.id = i.contract_id
+         WHERE i.due_date = :d AND c.status = 'active' AND c.employee_id = :emp
+           AND (i.interest_paid < i.interest_due OR i.principal_paid < i.principal_due)`,
+        { d: date, emp: e.id },
+      ),
+    ]);
+
+    // อัตรารายวันที่ตั้งไว้ (รายเดือนไม่คิดเข้ายอดวัน — จ่ายตามรอบของมันเอง)
+    const wageDue = e.wage_period === 'daily' ? Number(e.wage_amount) : 0;
+    const fuelDue = e.fuel_period === 'daily' ? Number(e.fuel_amount) : 0;
+
+    const handIn = Number(pay.cash) + Number(freePay.v);
+    const owedToEmployee = wageDue + fuelDue + Number(docFee.v);
+    rows.push({
+      employee: { id: e.id, code: e.code, full_name: e.full_name, area: e.area },
+      due_count: Number(due.due_count),
+      expected: Number(due.expected),
+      contracts_paid: Number(pay.contracts_paid),
+      cash_collected: Number(pay.cash),
+      floating_interest: Number(pay.floating_interest),
+      principal_cut: Number(pay.principal_cut),
+      free_pay: Number(freePay.v),
+      free_pay_count: Number(freePay.n),
+      doc_fee_today: Number(docFee.v),
+      wage_due: wageDue,
+      fuel_due: fuelDue,
+      wage_paid: Number(expensesPaid.wage_paid),
+      fuel_paid: Number(expensesPaid.fuel_paid),
+      hand_in: handIn,
+      owed_to_employee: owedToEmployee,
+      net: handIn - owedToEmployee,
+    });
+  }
+
+  // แถวรวมทุกโซน (ข้อ 32: Admin ดูยอดรวม A + B ได้)
+  const total = rows.reduce(
+    (t, r) => ({
+      due_count: t.due_count + r.due_count,
+      expected: t.expected + r.expected,
+      contracts_paid: t.contracts_paid + r.contracts_paid,
+      cash_collected: t.cash_collected + r.cash_collected,
+      floating_interest: t.floating_interest + r.floating_interest,
+      principal_cut: t.principal_cut + r.principal_cut,
+      free_pay: t.free_pay + r.free_pay,
+      doc_fee_today: t.doc_fee_today + r.doc_fee_today,
+      wage_due: t.wage_due + r.wage_due,
+      fuel_due: t.fuel_due + r.fuel_due,
+      hand_in: t.hand_in + r.hand_in,
+      owed_to_employee: t.owed_to_employee + r.owed_to_employee,
+      net: t.net + r.net,
+    }),
+    { due_count: 0, expected: 0, contracts_paid: 0, cash_collected: 0, floating_interest: 0,
+      principal_cut: 0, free_pay: 0, doc_fee_today: 0, wage_due: 0, fuel_due: 0,
+      hand_in: 0, owed_to_employee: 0, net: 0 },
+  );
+
+  return { date, rows, total };
+}

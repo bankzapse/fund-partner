@@ -18,12 +18,23 @@ import { toServePath } from '../lib/storage.js';
 const router = Router();
 
 /**
- * ออกรหัสลูกหนี้อัตโนมัติ โดยข้ามเลขที่ถูกใช้ไปแล้ว
- * (ผู้ใช้กรอกรหัสเองได้ ตัวนับจึงอาจตามหลังความจริง)
+ * ออกรหัสลูกหนี้อัตโนมัติ รันแยกตามโซนของพนักงานผู้ดูแล (สเปกข้อ 2-3)
+ *
+ * โซน A (รหัสพนักงาน 'A') → A.1, A.2, ... โซน B → B.1, B.2, ...
+ * เพิ่มพนักงานใหม่ในอนาคตได้เรื่อย ๆ (C.1, D.1, ...) ตามรหัสพนักงาน
+ * ลูกหนี้ที่ไม่ผูกพนักงานใช้รหัสกลางแบบเดิม (D00001)
+ *
+ * ข้ามเลขที่ถูกใช้ไปแล้วเสมอ (ผู้ใช้กรอกรหัสเองได้ ตัวนับจึงอาจตามหลังความจริง)
+ * รหัสเก่าไม่ถูกนำกลับมาใช้กับลูกค้าใหม่ เพราะแถวลูกหนี้เดิมไม่ถูกลบ (unique ค้ำไว้)
  */
-async function nextFreeDebtorCode() {
+async function nextFreeDebtorCode(employeeId = null) {
+  const emp = employeeId
+    ? await get(`SELECT code FROM employees WHERE id = :id`, { id: employeeId })
+    : null;
   for (let attempt = 0; attempt < 100; attempt++) {
-    const code = `D${String(await nextCounter('debtor')).padStart(5, '0')}`;
+    const code = emp
+      ? `${emp.code}.${await nextCounter(`debtor:${emp.code}`)}`
+      : `D${String(await nextCounter('debtor')).padStart(5, '0')}`;
     if (!(await get(`SELECT id FROM debtors WHERE code = :c`, { c: code }))) return code;
   }
   throw Object.assign(new Error('ออกรหัสลูกหนี้อัตโนมัติไม่สำเร็จ กรุณาระบุรหัสเอง'), { status: 500 });
@@ -157,7 +168,7 @@ router.post(
     if (!b.full_name?.trim()) return res.status(400).json({ error: 'ต้องระบุชื่อ-นามสกุล' });
 
     const debtor = await tx(async () => {
-      const code = b.code?.trim() || (await nextFreeDebtorCode());
+      const code = b.code?.trim() || (await nextFreeDebtorCode(b.employee_id ?? null));
       if (await get(`SELECT id FROM debtors WHERE code = :c`, { c: code })) {
         throw Object.assign(new Error('รหัสลูกหนี้นี้ถูกใช้แล้ว'), { status: 400 });
       }

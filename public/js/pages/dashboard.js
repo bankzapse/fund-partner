@@ -3,18 +3,48 @@ import {
   api, el, stat, table, badge, baht, thaiDate, todayISO, can,
 } from '../core.js';
 
+// โซนที่เลือกดูล่าสุด — จำไว้ระหว่างการรีเฟรชหน้า dashboard ในเซสชันเดียวกัน
+let selectedZone = '';
+
 export async function renderDashboard() {
   const date = todayISO();
-  const d = await api.get(`/api/dashboard?date=${date}`);
+  const zoneQS = selectedZone ? `&employee_id=${selectedZone}` : '';
+  const d = await api.get(`/api/dashboard?date=${date}${zoneQS}`);
   const showProfit = can('profit_view');
 
   const wrap = el('div', {});
+
+  // ตัวเลือกโซนสำหรับเจ้าของ/ผู้จัดการ (สเปกข้อ 41) — พนักงานเห็นเฉพาะโซนตัวเองอยู่แล้ว
+  let zoneSel = null;
+  if (can('employees_manage') || can('reports_view') === 'all') {
+    try {
+      const { items } = await api.get('/api/admin/employees');
+      if (items?.length) {
+        zoneSel = el('select', { style: 'width:auto' },
+          el('option', { value: '' }, 'รวมทุกโซน'),
+          items.filter((e) => e.is_active).map((e) =>
+            el('option', { value: e.id, selected: String(e.id) === String(selectedZone) },
+              `โซน ${e.code} — ${e.full_name}`)),
+        );
+        zoneSel.addEventListener('change', async () => {
+          selectedZone = zoneSel.value;
+          // เรนเดอร์หน้าใหม่ทั้งหน้าด้วยค่าโซนที่เลือก
+          const parent = wrap.parentElement;
+          if (parent) {
+            const fresh = await renderDashboard();
+            parent.replaceChild(fresh, wrap);
+          }
+        });
+      }
+    } catch { /* ไม่ใช่เจ้าของ — ไม่ต้องมีตัวเลือก */ }
+  }
 
   wrap.append(
     el(
       'div',
       { class: 'page-head' },
       el('div', {}, el('h2', {}, 'ภาพรวมวันนี้'), el('div', { class: 'sub' }, thaiDate(date))),
+      zoneSel,
       d.closing
         ? badge('completed', 'ปิดยอดวันนี้แล้ว')
         : can('daily_closing')

@@ -9,6 +9,7 @@ const TABS = [
   { key: 'monthly', label: 'รายเดือน' },
   { key: 'yearly', label: 'รายปี' },
   { key: 'employees', label: 'พนักงาน' },
+  { key: 'closing', label: 'ปิดยอดพนักงาน' },
   { key: 'overdue', label: 'ค้างชำระ' },
   { key: 'reyod', label: 'ประวัติรียอด' },
   { key: 'profit', label: 'กำไรขาดทุน', cap: 'profit_view' },
@@ -88,10 +89,51 @@ async function renderTab(tab, q, inputs) {
   if (tab === 'monthly') return summaryTab(q, 'เดือนนี้');
   if (tab === 'yearly') return yearlyTab(inputs.yearInput.value);
   if (tab === 'employees') return employeeTab(q);
+  if (tab === 'closing') return employeeClosingTab(inputs.dateInput.value);
   if (tab === 'overdue') return overdueTab();
   if (tab === 'reyod') return reyodTab(q);
   if (tab === 'profit') return profitTab(q);
   return el('div', {});
+}
+
+/** ปิดยอดพนักงานประจำวัน (สเปกข้อ 32) — แยกรายคน/โซน + แถวรวมทุกโซน */
+async function employeeClosingTab(date) {
+  const d = await api.get(`/api/reports/employee-closing?date=${date}`);
+  const money = (v) => baht(v ?? 0);
+  const header = ['โซน/พนักงาน', { label: 'ต้องเก็บ (งวด)', num: true }, { label: 'เก็บได้', num: true },
+    { label: 'ดอกลอย', num: true }, { label: 'ตัดต้น', num: true }, { label: 'จ่ายฟรี', num: true },
+    { label: 'ค่าทำสัญญา', num: true }, { label: 'ค่าแรง', num: true }, { label: 'ค่าน้ำมัน', num: true },
+    { label: 'นำส่งกิจการ', num: true }, { label: 'กิจการต้องจ่าย', num: true }, { label: 'ยอดสุทธิ', num: true }];
+  const rowOf = (label, r, bold = false) =>
+    el('tr', bold ? { style: 'font-weight:700;background:var(--navy-50)' } : {},
+      el('td', {}, label),
+      el('td', { class: 'num' }, String(r.due_count)),
+      el('td', { class: 'num' }, money(r.cash_collected)),
+      el('td', { class: 'num' }, money(r.floating_interest)),
+      el('td', { class: 'num' }, money(r.principal_cut)),
+      el('td', { class: 'num' }, money(r.free_pay)),
+      el('td', { class: 'num' }, money(r.doc_fee_today)),
+      el('td', { class: 'num' }, money(r.wage_due)),
+      el('td', { class: 'num' }, money(r.fuel_due)),
+      el('td', { class: 'num' }, money(r.hand_in)),
+      el('td', { class: 'num' }, money(r.owed_to_employee)),
+      el('td', { class: 'num' }, money(r.net)),
+    );
+  return el(
+    'div',
+    { class: 'card' },
+    el('h3', {}, `ปิดยอดพนักงานประจำวัน ${thaiDate(d.date)}`),
+    el('div', { class: 'hint' },
+      'นำส่งกิจการ = เงินรับชำระ + จ่ายฟรี · กิจการต้องจ่าย = ค่าแรง/น้ำมันตามอัตรารายวัน + ค่าทำสัญญาที่เกิดวันนั้น'),
+    table(
+      header,
+      [
+        ...d.rows.map((r) => rowOf(`${r.employee.full_name} (${r.employee.code})`, r)),
+        rowOf('รวมทุกโซน', d.total, true),
+      ],
+      'ไม่มีพนักงานที่ใช้งานอยู่',
+    ),
+  );
 }
 
 async function summaryTab(q, _label = 'ช่วงที่เลือก') {

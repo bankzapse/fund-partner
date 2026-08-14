@@ -182,8 +182,10 @@ router.post(
       }
       const now = nowISO();
       const newId = await insert(
-        `INSERT INTO employees (user_id, code, full_name, phone, area, supervisor_id, is_active, created_at, updated_at)
-         VALUES (:uid, :code, :name, :phone, :area, :sup, 1, :now, :now)`,
+        `INSERT INTO employees (user_id, code, full_name, phone, area, supervisor_id,
+                                 wage_amount, wage_period, fuel_amount, fuel_period,
+                                 is_active, created_at, updated_at)
+         VALUES (:uid, :code, :name, :phone, :area, :sup, :wage, :wagePeriod, :fuel, :fuelPeriod, 1, :now, :now)`,
         {
           uid: b.user_id ?? null,
           code,
@@ -191,6 +193,10 @@ router.post(
           phone: b.phone ?? null,
           area: b.area ?? null,
           sup: b.supervisor_id ?? null,
+          wage: intParam(b.wage_amount, 0),
+          wagePeriod: b.wage_period === 'monthly' ? 'monthly' : 'daily',
+          fuel: intParam(b.fuel_amount, 0),
+          fuelPeriod: b.fuel_period === 'monthly' ? 'monthly' : 'daily',
           now,
         },
       );
@@ -211,7 +217,9 @@ router.put(
     const b = req.body ?? {};
     await run(
       `UPDATE employees SET full_name = :name, phone = :phone, area = :area,
-              user_id = :uid, supervisor_id = :sup, is_active = :active, updated_at = :now
+              user_id = :uid, supervisor_id = :sup, is_active = :active,
+              wage_amount = :wage, wage_period = :wagePeriod,
+              fuel_amount = :fuel, fuel_period = :fuelPeriod, updated_at = :now
        WHERE id = :id`,
       {
         id,
@@ -221,6 +229,11 @@ router.put(
         uid: b.user_id === undefined ? before.user_id : b.user_id,
         sup: b.supervisor_id === undefined ? before.supervisor_id : b.supervisor_id,
         active: b.is_active === undefined ? before.is_active : b.is_active ? 1 : 0,
+        // อัตราค่าแรง/น้ำมัน (สเปกข้อ 30-31) — 0 = จ่ายตามจริง/กรอกเอง
+        wage: b.wage_amount === undefined ? before.wage_amount : intParam(b.wage_amount, 0),
+        wagePeriod: b.wage_period === undefined ? before.wage_period : (b.wage_period === 'monthly' ? 'monthly' : 'daily'),
+        fuel: b.fuel_amount === undefined ? before.fuel_amount : intParam(b.fuel_amount, 0),
+        fuelPeriod: b.fuel_period === undefined ? before.fuel_period : (b.fuel_period === 'monthly' ? 'monthly' : 'daily'),
         now: nowISO(),
       },
     );

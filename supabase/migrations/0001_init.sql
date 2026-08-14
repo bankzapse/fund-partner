@@ -42,6 +42,12 @@ CREATE TABLE IF NOT EXISTS employees (
   phone         TEXT,
   area          TEXT,
   supervisor_id INTEGER REFERENCES employees(id),
+  -- อัตราค่าแรง/ค่าน้ำมันต่อคน (สเปกข้อ 28, 30-31) — หน่วยสตางค์
+  -- period: daily = รายวัน, monthly = รายเดือน · จำนวน 0 = จ่ายตามจริง/กรอกเอง
+  wage_amount   BIGINT  NOT NULL DEFAULT 0,
+  wage_period   TEXT    NOT NULL DEFAULT 'daily' CHECK (wage_period IN ('daily','monthly')),
+  fuel_amount   BIGINT  NOT NULL DEFAULT 0,
+  fuel_period   TEXT    NOT NULL DEFAULT 'daily' CHECK (fuel_period IN ('daily','monthly')),
   is_active     INTEGER NOT NULL DEFAULT 1,
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL
@@ -317,6 +323,14 @@ ALTER TABLE contracts ADD COLUMN IF NOT EXISTS total_due BIGINT NOT NULL DEFAULT
 -- ในยอดที่ยกไปตอนรียอด มีดอกเบี้ยเดิมที่ยังไม่ได้รับรู้ปนอยู่เท่าไร
 -- เก็บไว้เพื่อตรวจสอบย้อนหลังได้ว่ารายได้ที่รับรู้ตอนรียอดมาจากไหน
 ALTER TABLE contract_links ADD COLUMN IF NOT EXISTS carried_interest BIGINT NOT NULL DEFAULT 0;
+
+-- อัตราค่าแรง/ค่าน้ำมันรายพนักงาน (สเปกข้อ 28, 30-31)
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS wage_amount BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS wage_period TEXT NOT NULL DEFAULT 'daily'
+  CHECK (wage_period IN ('daily','monthly'));
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS fuel_amount BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS fuel_period TEXT NOT NULL DEFAULT 'daily'
+  CHECK (fuel_period IN ('daily','monthly'));
 
 -- พนักงานผู้เปิดสัญญา (สเปกข้อ 21/29) — สัญญาเก่าที่เป็น NULL ใช้ employee_id แทน
 ALTER TABLE contracts ADD COLUMN IF NOT EXISTS opened_by_employee_id INTEGER REFERENCES employees(id);

@@ -12,7 +12,11 @@ router.get(
   need('dashboard'),
   wrap(async (req, res) => {
     const date = req.query.date ?? today();
-    const scope = await scopeEmployeeId(req.ctx.user, 'dashboard');
+    // เจ้าของ/ผู้จัดการเลือกดูรายโซนได้ (สเปกข้อ 41) — พนักงานถูกบังคับโซนตัวเองเสมอ
+    // (scopeEmployeeId คืน null = เห็นได้ทั้งหมด จึงยอมรับตัวกรองจากหน้าจอ)
+    const ownScope = await scopeEmployeeId(req.ctx.user, 'dashboard');
+    const zoneFilter = req.query.employee_id ? Number(req.query.employee_id) : null;
+    const scope = ownScope !== null ? ownScope : zoneFilter;
     const day = await financeSummary({ from: date, to: date, employeeId: scope });
     const month = await financeSummary({ ...monthRange(date.slice(0, 7)), employeeId: scope });
 
@@ -27,6 +31,7 @@ router.get(
 
     res.json({
       date,
+      zone: scope, // โซนที่กำลังดู (null = รวมทุกโซน)
       capital,
       today: day,
       month,
