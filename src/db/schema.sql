@@ -96,7 +96,7 @@ CREATE TABLE IF NOT EXISTS contracts (
   --   per_installment = กรอกดอกเป็นบาทต่องวด (แบบเดิม)
   --   flat_total      = ดอกเหมารวมคงที่ต่อสัญญา คิดเป็น % ของเงินต้น
   interest_mode       TEXT    NOT NULL DEFAULT 'per_installment'
-                      CHECK (interest_mode IN ('per_installment','flat_total')),
+                      CHECK (interest_mode IN ('per_installment','flat_total','deduct_upfront')),
   -- อัตราดอกเบี้ยเก็บเป็นจำนวนเต็มหน่วยหนึ่งในหมื่น (basis point) เช่น 20% = 2000
   -- เก็บเป็นจำนวนเต็มด้วยเหตุผลเดียวกับที่เงินเก็บเป็นสตางค์ คือกันค่าเพี้ยนจากทศนิยม
   interest_rate_bp    INTEGER NOT NULL DEFAULT 0,
@@ -299,7 +299,12 @@ CREATE TABLE IF NOT EXISTS approvals (
 -- จึงพังทันทีในการรันรอบที่สอง
 -- ---------------------------------------------------------------------------
 ALTER TABLE contracts ADD COLUMN IF NOT EXISTS interest_mode TEXT NOT NULL DEFAULT 'per_installment'
-  CHECK (interest_mode IN ('per_installment','flat_total'));
+  CHECK (interest_mode IN ('per_installment','flat_total','deduct_upfront'));
+-- ฐานข้อมูลเดิมมีคอลัมน์นี้อยู่แล้ว (ADD COLUMN ด้านบนไม่รัน) แต่ CHECK เป็นชุดค่าเก่า
+-- ที่ไม่มี 'deduct_upfront' — ถอนแล้วสร้างใหม่ทุกบูต (คู่ DROP IF EXISTS + ADD รันซ้ำได้)
+ALTER TABLE contracts DROP CONSTRAINT IF EXISTS contracts_interest_mode_check;
+ALTER TABLE contracts ADD CONSTRAINT contracts_interest_mode_check
+  CHECK (interest_mode IN ('per_installment','flat_total','deduct_upfront'));
 ALTER TABLE contracts ADD COLUMN IF NOT EXISTS interest_rate_bp INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE contracts ADD COLUMN IF NOT EXISTS total_due BIGINT NOT NULL DEFAULT 0;
 -- ในยอดที่ยกไปตอนรียอด มีดอกเบี้ยเดิมที่ยังไม่ได้รับรู้ปนอยู่เท่าไร

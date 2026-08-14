@@ -93,7 +93,7 @@ async function paymentPanel(contractId) {
       submit.disabled = false;
       // สัญญาเหมารวม: เงินรับเป็น "รับชำระตามสัญญา" ไม่แสดงแยกต้น/ดอก (สเปกข้อ 13)
       // แสดงยอดคงเหลือตามสัญญาแทน — ลูกค้าเข้าใจง่ายและตรงกติกา
-      const flat = p.interest_mode === 'flat_total';
+      const flat = p.interest_mode === 'flat_total' || p.interest_mode === 'deduct_upfront';
       clear(result).append(
         el('div', { class: 'kv' }, el('span', { class: 'k' }, flat ? 'รับชำระตามสัญญา' : 'ยอดจ่ายจริง'), el('span', { class: 'v' }, baht(p.amount_paid))),
         ...(flat
@@ -116,7 +116,7 @@ async function paymentPanel(contractId) {
   extraToPrincipal.addEventListener('change', preview);
 
   // สัญญาเหมารวมไม่มีแนวคิด "จ่ายเฉพาะดอก" — เงินรับเป็นรับชำระตามสัญญาอย่างเดียว
-  const isFlat = c.interest_mode === 'flat_total';
+  const isFlat = c.interest_mode === 'flat_total' || c.interest_mode === 'deduct_upfront';
   const quickButtons = el(
     'div',
     { class: 'quick' },
@@ -262,7 +262,9 @@ async function paymentPanel(contractId) {
       quickButtons,
       el('div', { class: 'mt' }, field('จำนวนเงิน (บาท)', amount)),
       el('div', { class: 'grid k2' }, field('วันที่รับเงิน', paidDate), field('หมายเหตุ', note)),
-      c.type === 'floating' || s.principal_remaining > 0
+      // โหมดเหมา (เหมารวม/หักดอกก่อน) ไม่มีแนวคิดตัดเงินต้นข้ามงวด — ตารางงวดคือหนี้ทั้งหมด
+      // ถ้าโชว์ให้ติ๊ก เงินจะไปลดเงินต้นโดยไม่แตะงวด สัญญาจ่ายครบแล้วจะปิดไม่ได้
+      !isFlat && (c.type === 'floating' || s.principal_remaining > 0)
         ? el('label', { class: 'rowline', style: 'margin:.2rem 0 .6rem' },
             el('span', { class: 'small' }, 'ส่วนที่เกินจากงวดปัจจุบันให้ตัดเงินต้น (ชำระต้น/ปิดก่อนกำหนด)'),
             el('span', { style: 'flex:none;width:auto' }, extraToPrincipal))

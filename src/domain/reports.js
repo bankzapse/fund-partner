@@ -1,4 +1,4 @@
-import { all, get, run, tx, DISBURSE_CATEGORY, CAPITAL_OUT_CATEGORY, CAPITAL_IN_CATEGORY, REYOD_INTEREST_CATEGORY, CLOSE_INTEREST_CATEGORY } from '../db/index.js';
+import { all, get, run, tx, DISBURSE_CATEGORY, CAPITAL_OUT_CATEGORY, CAPITAL_IN_CATEGORY, REYOD_INTEREST_CATEGORY, CLOSE_INTEREST_CATEGORY, UPFRONT_INTEREST_CATEGORY, REYOD_CARRY_RETURN_CATEGORY } from '../db/index.js';
 import { today, nowISO, monthRange, yearRange, addDays } from '../lib/time.js';
 import { audit } from '../lib/audit.js';
 
@@ -39,12 +39,15 @@ export async function financeSummary({ from, to, employeeId = null }) {
     `SELECT
        COALESCE(SUM(CASE WHEN i.category = 'doc_fee' THEN i.amount ELSE 0 END), 0) AS doc_fee_income,
        COALESCE(SUM(CASE WHEN i.category = :capIn  THEN i.amount ELSE 0 END), 0) AS capital_in,
-       COALESCE(SUM(CASE WHEN i.category NOT IN ('doc_fee', :capIn, :reyodInt, :closeInt) THEN i.amount ELSE 0 END), 0) AS other_income,
+       COALESCE(SUM(CASE WHEN i.category NOT IN ('doc_fee', :capIn, :reyodInt, :closeInt, :upfrontInt, :carryRet) THEN i.amount ELSE 0 END), 0) AS other_income,
        -- ดอกที่รับรู้ตอนรียอด/ตอนปิดสัญญา เป็นรายได้ทางบัญชี แต่ไม่มีเงินสดเคลื่อนไหวจริง
        -- (ตอนรียอด: กลายเป็นยอดหนี้สัญญาใหม่ / ตอนปิด: เงินสดเข้ามาก่อนแล้วระหว่างสัญญา)
        -- จึงต้องแยกออกมา ไม่นับรวมในกระแสเงินสด
        COALESCE(SUM(CASE WHEN i.category = :reyodInt THEN i.amount ELSE 0 END), 0) AS reyod_interest_income,
        COALESCE(SUM(CASE WHEN i.category = :closeInt THEN i.amount ELSE 0 END), 0) AS close_interest_income,
+       -- ดอกหักก่อน (สเปกข้อ 15) ต่างจากสองก้อนบน: เป็น "เงินสดจริง" —
+       -- ถูกหักออกจากเงินที่จ่ายให้ลูกค้า ณ วันเปิด จึงอยู่ในกระแสเงินสดตามปกติ
+       COALESCE(SUM(CASE WHEN i.category = :upfrontInt THEN i.amount ELSE 0 END), 0) AS upfront_interest_income,
        COALESCE(SUM(i.amount), 0) AS total_income_entries
      FROM income_entries i
      WHERE i.is_void = 0 AND i.entry_date BETWEEN :from AND :to
@@ -56,6 +59,8 @@ export async function financeSummary({ from, to, employeeId = null }) {
       capIn: CAPITAL_IN_CATEGORY,
       reyodInt: REYOD_INTEREST_CATEGORY,
       closeInt: CLOSE_INTEREST_CATEGORY,
+      upfrontInt: UPFRONT_INTEREST_CATEGORY,
+      carryRet: REYOD_CARRY_RETURN_CATEGORY,
       emp: employeeId,
     },
   );
@@ -104,8 +109,10 @@ export async function financeSummary({ from, to, employeeId = null }) {
   const totalIn = pay.cash_from_debtors + income.total_income_entries - nonCashIncome;
   const totalOut = exp.total_expense;
   // แต่ในเชิงกำไรต้องนับ ไม่งั้นดอกก้อนนี้จะหายจากรายงานตลอดกาล
+  // ดอกหักก่อนเป็นรายได้เงินสดตอนเปิดสัญญา นับทั้งกระแสเงินสดและกำไร
   const realIncome =
-    pay.interest_income + income.doc_fee_income + income.other_income + nonCashIncome;
+    pay.interest_income + income.doc_fee_income + income.other_income +
+    income.upfront_interest_income + nonCashIncome;
   const netProfit = realIncome - exp.operating_expense;
 
   return {
@@ -118,6 +125,7 @@ export async function financeSummary({ from, to, employeeId = null }) {
     recognized_interest_income: nonCashIncome,
     reyod_interest_income: income.reyod_interest_income,
     close_interest_income: income.close_interest_income,
+    upfront_interest_income: income.upfront_interest_income,
     net_cash: totalIn - totalOut,
     // รายได้ / กำไร
     interest_income: pay.interest_income,
@@ -317,6 +325,7 @@ export async function breakdown({ from, to }) {
   const s = await financeSummary({ from, to });
   const income = [
     { category: 'ดอกเบี้ย', amount: s.interest_income },
+    { category: 'ดอกเบี้ยหักก่อน', amount: s.upfront_interest_income },
     { category: 'ดอกเบี้ยรับรู้ (ปิด/รียอด)', amount: s.recognized_interest_income },
     { category: 'ค่าทำเอกสาร', amount: s.doc_fee_income },
     { category: 'รายได้อื่น', amount: s.other_income },

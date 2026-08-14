@@ -56,9 +56,9 @@ router.get(
       { label: 'ลูกหนี้', key: 'debtor_name' },
       { label: 'ยอดที่ควรจ่าย', value: (r) => (r.due_amount / 100).toFixed(2) },
       { label: 'ยอดจ่ายจริง', value: (r) => (r.amount_paid / 100).toFixed(2) },
-      // สัญญาเหมารวม: เงินรับเป็น "รับชำระตามสัญญา" ไม่แสดงแยกต้น/ดอก (สเปกข้อ 13)
-      { label: 'ดอกเบี้ย', value: (r) => (r.contract_interest_mode === 'flat_total' ? '-' : (r.interest_amount / 100).toFixed(2)) },
-      { label: 'เงินต้น', value: (r) => (r.contract_interest_mode === 'flat_total' ? '-' : (r.principal_amount / 100).toFixed(2)) },
+      // สัญญาโหมดเหมา (เหมารวม/หักดอกก่อน): รับชำระตามสัญญา ไม่แสดงแยกต้น/ดอก (สเปกข้อ 13)
+      { label: 'ดอกเบี้ย', value: (r) => (['flat_total', 'deduct_upfront'].includes(r.contract_interest_mode) ? '-' : (r.interest_amount / 100).toFixed(2)) },
+      { label: 'เงินต้น', value: (r) => (['flat_total', 'deduct_upfront'].includes(r.contract_interest_mode) ? '-' : (r.principal_amount / 100).toFixed(2)) },
       { label: 'สถานะ', key: 'status' },
       { label: 'ผู้รับเงิน', key: 'received_by_name' },
       { label: 'ยกเลิก', value: (r) => (r.is_void ? 'ยกเลิก' : '') },

@@ -153,6 +153,8 @@ router.get(
       to,
       revenue: [
         { label: 'ดอกเบี้ยรับ', amount: f.interest_income },
+        // หักดอกก่อน: รับรู้เป็นเงินสดตั้งแต่วันเปิดสัญญา (สเปกข้อ 15)
+        { label: 'ดอกเบี้ยหักก่อน', amount: f.upfront_interest_income },
         // สัญญาเหมารวมรับรู้ดอกตอนปิด/รียอด (สเปกข้อ 14) — เป็นรายได้ก้อนหลักของกำไร
         { label: 'ดอกเบี้ยรับรู้ (ปิด/รียอด)', amount: f.recognized_interest_income },
         { label: 'ค่าทำเอกสาร', amount: f.doc_fee_income },
@@ -184,6 +186,7 @@ router.get(
       ['เงินจ่ายทั้งหมด', f.total_out],
       ['เงินสดสุทธิ', f.net_cash],
       ['ดอกเบี้ยรับ', f.interest_income],
+      ['ดอกเบี้ยหักก่อน', f.upfront_interest_income],
       ['ดอกเบี้ยรับรู้ (ปิด/รียอด)', f.recognized_interest_income],
       ['ค่าทำเอกสาร', f.doc_fee_income],
       ['รายได้อื่น', f.other_income],

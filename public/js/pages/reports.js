@@ -109,6 +109,7 @@ async function summaryTab(q, _label = 'ช่วงที่เลือก') {
       stat('เงินสดสุทธิ', baht(f.net_cash), { tone: f.net_cash >= 0 ? 'pos' : 'neg' }),
       stat('กำไรสุทธิ', baht(f.net_profit), { tone: f.net_profit >= 0 ? 'pos' : 'neg' }),
       stat('ดอกเบี้ยรับ', baht(f.interest_income), { small: true }),
+      stat('ดอกเบี้ยหักก่อน', baht(f.upfront_interest_income ?? 0), { small: true }),
       stat('ดอกเบี้ยรับรู้ (ปิด/รียอด)', baht(f.recognized_interest_income ?? 0), { small: true }),
       stat('ค่าทำเอกสาร', baht(f.doc_fee_income), { small: true }),
       stat('รายได้อื่น', baht(f.other_income), { small: true }),

@@ -103,6 +103,7 @@ export async function renderNewContract() {
     'select',
     {},
     el('option', { value: 'flat_total' }, 'เหมารวมต่อสัญญา (กรอกเป็น %)'),
+    el('option', { value: 'deduct_upfront' }, 'หักดอกก่อน (กรอกเป็น % หักตอนจ่ายเงิน)'),
     el('option', { value: 'per_installment' }, 'กำหนดดอกเป็นบาทต่องวด'),
   );
   const ratePct = el('input', { type: 'number', inputmode: 'decimal', step: '0.01', value: '20' });
@@ -114,11 +115,13 @@ export async function renderNewContract() {
   const deductFirst = el('input', { type: 'checkbox', checked: state.settings.deduct_first_installment === '1' });
   const note = el('textarea', { rows: 2 });
 
+  const rateHint = el('div', { class: 'hint' },
+    'คิดครั้งเดียวจากเงินต้น เช่น กู้ 2,000 ดอก 20% = ดอก 400 ยอดหนี้รวม 2,400');
   const rateRow = el(
     'div',
     {},
-    field('ดอกเบี้ยต่อสัญญา (%) *', ratePct,
-      'คิดครั้งเดียวจากเงินต้น เช่น กู้ 2,000 ดอก 20% = ดอก 400 ยอดหนี้รวม 2,400'),
+    field('ดอกเบี้ยต่อสัญญา (%) *', ratePct),
+    rateHint,
   );
   const legacyRow = el(
     'div',
@@ -150,16 +153,33 @@ export async function renderNewContract() {
     };
   }
 
+  let savedDeductFirst = null; // ค่าติ๊กหักงวดแรกก่อนถูกโหมดหักดอกก่อนบังคับปิด
+
   /** ซ่อน/แสดงช่องให้ตรงกับโหมดที่เลือก จะได้ไม่กรอกช่องที่ระบบไม่ได้ใช้ */
   function syncMode() {
-    // ดอกลอยยังไม่รองรับโหมดเหมารวม จึงบังคับกลับเป็นโหมดเดิม
+    // ดอกลอยยังไม่รองรับโหมดที่คิดจากอัตรา % จึงบังคับกลับเป็นโหมดเดิม
     const floating = typeSel.value === 'floating';
-    if (floating && modeSel.value === 'flat_total') modeSel.value = 'per_installment';
+    if (floating && modeSel.value !== 'per_installment') modeSel.value = 'per_installment';
     modeSel.disabled = floating;
 
-    const flat = modeSel.value === 'flat_total';
-    rateRow.style.display = flat ? '' : 'none';
-    legacyRow.style.display = flat ? 'none' : '';
+    const rateMode = modeSel.value === 'flat_total' || modeSel.value === 'deduct_upfront';
+    rateRow.style.display = rateMode ? '' : 'none';
+    legacyRow.style.display = rateMode ? 'none' : '';
+
+    // สเปกข้อ 11: หักดอกก่อน → ไม่หักงวดแรก (ระบบบังคับ ติ๊กไม่ได้)
+    // จำค่าติ๊กเดิมไว้ คืนให้เมื่อสลับกลับโหมดอื่น — ไม่งั้นค่าตั้งต้นของร้านหายเงียบ ๆ
+    const upfront = modeSel.value === 'deduct_upfront';
+    if (upfront && !deductFirst.disabled) {
+      savedDeductFirst = deductFirst.checked;
+      deductFirst.checked = false;
+    } else if (!upfront && deductFirst.disabled && savedDeductFirst !== null) {
+      deductFirst.checked = savedDeductFirst;
+      savedDeductFirst = null;
+    }
+    deductFirst.disabled = upfront;
+    rateHint.textContent = upfront
+      ? 'หักจากเงินที่จ่ายให้ลูกค้า เช่น ยอดสัญญา 2,000 ดอก 10% = หัก 200 ลูกค้าได้ 1,800 ส่งคืน 2,000'
+      : 'คิดครั้งเดียวจากเงินต้น เช่น กู้ 2,000 ดอก 20% = ดอก 400 ยอดหนี้รวม 2,400';
   }
 
   async function refresh() {
@@ -180,6 +200,9 @@ export async function renderNewContract() {
         el('h3', {}, 'ตรวจสอบก่อนยืนยัน'),
         ...preview.warnings.map((w) => el('div', { class: 'warn' }, w)),
         el('div', { class: 'kv' }, el('span', { class: 'k' }, 'เงินต้นตามสัญญา'), el('span', { class: 'v' }, baht(preview.principalAmount))),
+        preview.upfront_interest > 0
+          ? el('div', { class: 'kv' }, el('span', { class: 'k' }, 'หักดอกก่อน'), el('span', { class: 'v' }, `- ${baht(preview.upfront_interest)}`))
+          : null,
         el('div', { class: 'kv' }, el('span', { class: 'k' }, 'หักค่าทำเอกสาร'), el('span', { class: 'v' }, `- ${baht(preview.doc_fee)}`)),
         el('div', { class: 'kv' }, el('span', { class: 'k' }, 'หักงวดแรก'), el('span', { class: 'v' }, `- ${baht(preview.first_installment)}`)),
         el('div', { class: 'kv total' }, el('span', { class: 'k' }, 'เงินที่ลูกค้าได้รับจริง'),
@@ -365,8 +388,8 @@ export async function renderContractDetail({ id }) {
             el('td', { class: 'num' }, baht(p.due_amount)),
             el('td', { class: 'num' }, baht(p.amount_paid)),
             // สัญญาเหมารวม: รับชำระตามสัญญา ไม่แสดงแยกต้น/ดอก (สเปกข้อ 13)
-            el('td', { class: 'num' }, c.interest_mode === 'flat_total' ? '—' : baht(p.interest_amount)),
-            el('td', { class: 'num' }, c.interest_mode === 'flat_total' ? '—' : baht(p.principal_amount)),
+            el('td', { class: 'num' }, ['flat_total', 'deduct_upfront'].includes(c.interest_mode) ? '—' : baht(p.interest_amount)),
+            el('td', { class: 'num' }, ['flat_total', 'deduct_upfront'].includes(c.interest_mode) ? '—' : baht(p.principal_amount)),
             el('td', {}, p.is_void ? badge('void', 'ยกเลิกแล้ว') : badge(p.status, PAYMENT_STATUS[p.status])),
             el('td', { class: 'small' }, p.received_by_name ?? '-'),
             el(

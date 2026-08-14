@@ -9,6 +9,8 @@ import {
   getSetting,
   DISBURSE_CATEGORY,
   REYOD_INTEREST_CATEGORY,
+  UPFRONT_INTEREST_CATEGORY,
+  REYOD_CARRY_RETURN_CATEGORY,
 } from '../db/index.js';
 import { assertNonNegative, assertPositive, formatBaht } from '../lib/money.js';
 import { today, nowISO, addDays, addMonths, isDateStr } from '../lib/time.js';
@@ -106,6 +108,40 @@ export function buildFlatSchedule({ type, startDate, numInstallments, principalA
   return { rows, interestTotal, totalDue, installmentAmount: rows[0].due_amount };
 }
 
+/**
+ * ตารางงวดโหมด "หักดอกก่อน" (สเปกข้อ 9, 15)
+ *
+ * ยอดสัญญา 2,000 ดอก 10% → หักดอก 200 ตอนจ่ายเงิน ลูกค้าได้จริง 1,800
+ * แต่ส่งคืนตามยอดสัญญา 2,000 — ตารางงวดจึงเป็น "เงินต้นล้วน" รวมเท่ายอดสัญญา
+ * (ดอกถูกรับรู้เป็นรายได้ตั้งแต่วันเปิดสัญญา ไม่ปนอยู่ในงวด)
+ *
+ * ใช้กติกาปัดบาทถ้วนเดียวกับโหมดเหมารวม: ค่างวดบาทถ้วน เศษไปงวดสุดท้าย
+ */
+export function buildDeductUpfrontSchedule({ type, startDate, numInstallments, principalAmount, interestRateBp }) {
+  const unit = CONTRACT_TYPES[type].unit;
+  const n = numInstallments;
+  // ดอกหักก่อน ปัดเป็นบาทถ้วน (เหตุผลเดียวกับโหมดเหมารวม — เก็บเงินสดหน้างานจริง)
+  const upfrontInterest = Math.round((principalAmount * interestRateBp) / 10000 / 100) * 100;
+  const totalDue = principalAmount; // ลูกค้าส่งคืนตามยอดสัญญา ไม่บวกดอก
+
+  const per = Math.floor(totalDue / n / 100) * 100;
+  if (per <= 0) {
+    throw new BusinessError('จำนวนงวดมากเกินไปจนค่างวดต่ำกว่า 1 บาท');
+  }
+  const dues = Array(n).fill(per);
+  dues[n - 1] = totalDue - per * (n - 1);
+
+  const rows = dues.map((due, i) => ({
+    seq: i + 1,
+    due_date: unit === 'day' ? addDays(startDate, i) : addMonths(startDate, i),
+    interest_due: 0, // ดอกรับรู้ไปแล้ววันเปิดสัญญา งวดเป็นเงินต้นล้วน
+    principal_due: due,
+    due_amount: due,
+  }));
+
+  return { rows, upfrontInterest, totalDue, installmentAmount: rows[0].due_amount };
+}
+
 export function buildSchedule({
   type,
   startDate,
@@ -151,7 +187,9 @@ export function buildSchedule({
  * ทุกที่ที่ต้องการตารางงวดต้องเรียกผ่านตัวนี้ ไม่เรียก buildSchedule ตรง ๆ
  */
 export function scheduleFor(p) {
-  return p.interestMode === 'flat_total' ? buildFlatSchedule(p).rows : buildSchedule(p);
+  if (p.interestMode === 'flat_total') return buildFlatSchedule(p).rows;
+  if (p.interestMode === 'deduct_upfront') return buildDeductUpfrontSchedule(p).rows;
+  return buildSchedule(p);
 }
 
 export async function previewContract(input) {
@@ -164,6 +202,12 @@ export async function previewContract(input) {
   const docFee = p.docFee;
   const firstInst = p.deductFirst ? schedule[0].due_amount : 0;
   const grossOut = p.grossOut ?? p.principalAmount;
+  // โหมดหักดอกก่อน (สเปกข้อ 9): ดอกทั้งก้อนถูกหักออกจากเงินที่จ่ายให้ลูกค้า ณ วันเปิด
+  // เช่น ยอดสัญญา 2,000 ดอก 10% → หัก 200 ลูกค้าได้ 1,800 แต่ส่งคืน 2,000
+  const upfrontIntended =
+    p.interestMode === 'deduct_upfront'
+      ? Math.round((p.principalAmount * p.interestRateBp) / 10000 / 100) * 100
+      : 0;
   // ห้ามหักเกินเงินที่จ่ายออกจริง
   //
   // เดิมใช้ Math.max(0, ...) ซึ่งกลืนส่วนที่ติดลบทิ้งเงียบ ๆ
@@ -171,14 +215,23 @@ export async function previewContract(input) {
   // ทั้งที่ไม่มีเงินสดจ่ายออกให้หัก เงินสดในระบบจึงงอกขึ้นเองทุกครั้งที่รียอด
   // (รียอดโดยไม่เติมเงิน + ค่าตั้งต้นของระบบ = เงินงอก 170 บาทต่อครั้ง)
   //
-  // แก้โดยหักได้ไม่เกินเงินที่มีจริง ค่าเอกสารก่อน แล้วที่เหลือค่อยหักงวดแรก
-  const feeCharged = Math.min(docFee, grossOut);
-  const firstCharged = Math.min(firstInst, Math.max(0, grossOut - feeCharged));
-  const cashToCustomer = grossOut - feeCharged - firstCharged;
+  // ลำดับการหัก: ดอกหักก่อน (นิยามของโหมด) → ค่าเอกสาร → งวดแรก
+  const upfrontCharged = Math.min(upfrontIntended, grossOut);
+  const feeCharged = Math.min(docFee, Math.max(0, grossOut - upfrontCharged));
+  const firstCharged = Math.min(firstInst, Math.max(0, grossOut - upfrontCharged - feeCharged));
+  const cashToCustomer = grossOut - upfrontCharged - feeCharged - firstCharged;
 
   const warnings = [];
-  // โหมดดอกเหมารวมกระจายเงินต้นครบเสมอโดยการออกแบบ จึงไม่ต้องเตือนสองข้อนี้
-  const legacyMode = p.interestMode !== 'flat_total';
+  // โหมดที่คิดจากอัตรา % (เหมารวม/หักดอกก่อน) กระจายเงินต้นครบเสมอโดยการออกแบบ
+  // จึงไม่ต้องเตือนสองข้อนี้ — เตือนเฉพาะโหมดเดิมที่ผู้ใช้กรอกค่างวดเอง
+  const legacyMode = p.interestMode === 'per_installment';
+  if (upfrontCharged < upfrontIntended) {
+    warnings.push(
+      `เงินที่จ่ายออกจริงมีแค่ ${formatBaht(grossOut)} บาท ` +
+        `จึงหักดอกก่อนได้ ${formatBaht(upfrontCharged)} จาก ${formatBaht(upfrontIntended)} บาท — ` +
+        `ส่วนที่หักไม่ได้จะไม่ถูกบันทึกเป็นรายได้ ถ้าต้องการเก็บครบ ให้เก็บเป็นเงินสดแยกต่างหาก`,
+    );
+  }
   if (legacyMode && p.type !== 'floating' && totalPrincipalScheduled < p.principalAmount) {
     warnings.push(
       `ตารางงวดตัดเงินต้นรวม ${formatBaht(totalPrincipalScheduled)} บาท ` +
@@ -223,9 +276,12 @@ export async function previewContract(input) {
     },
     doc_fee: feeCharged,
     first_installment: firstCharged,
+    // ดอกหักก่อนที่หักได้จริง (โหมด deduct_upfront เท่านั้น อื่น ๆ เป็น 0)
+    upfront_interest: upfrontCharged,
     // ค่าที่ตั้งใจหักเดิม เก็บไว้เพื่อเตือนเมื่อหักได้ไม่ครบ
     doc_fee_intended: docFee,
     first_installment_intended: firstInst,
+    upfront_interest_intended: upfrontIntended,
     gross_out: grossOut,
     cash_to_customer: cashToCustomer,
     warnings,
@@ -241,15 +297,19 @@ async function normalizeContractInput(input) {
 
   const principalAmount = assertPositive(input.principalAmount, 'เงินต้น');
 
-  // อ่านโหมดก่อนตรวจค่าอื่น เพราะโหมดดอกเหมารวมผู้ใช้ไม่ได้กรอก
-  // ดอกต่องวดกับค่างวดมาเลย ระบบคำนวณให้เองจากอัตรา %
-  const interestMode = input.interestMode === 'flat_total' ? 'flat_total' : 'per_installment';
-  const flatMode = interestMode === 'flat_total';
+  // อ่านโหมดก่อนตรวจค่าอื่น เพราะโหมดที่คิดจากอัตรา % (เหมารวม/หักดอกก่อน)
+  // ผู้ใช้ไม่ได้กรอกดอกต่องวดกับค่างวดมาเลย ระบบคำนวณให้เองจากอัตรา
+  const interestMode =
+    input.interestMode === 'flat_total' ? 'flat_total'
+    : input.interestMode === 'deduct_upfront' ? 'deduct_upfront'
+    : 'per_installment';
+  // สองโหมดที่ใช้อัตรา % และคำนวณตารางงวดให้เอง
+  const rateMode = interestMode === 'flat_total' || interestMode === 'deduct_upfront';
 
-  let interestPerInst = flatMode
+  let interestPerInst = rateMode
     ? 0
     : assertNonNegative(input.interestPerInst, 'ดอกเบี้ยต่องวด');
-  let installmentAmount = flatMode
+  let installmentAmount = rateMode
     ? 0
     : assertNonNegative(input.installmentAmount, 'ค่างวด');
   let numInstallments = Number(input.numInstallments);
@@ -260,23 +320,25 @@ async function normalizeContractInput(input) {
     throw new BusinessError('จำนวนงวดไม่ถูกต้อง');
   }
 
-  // โหมดดอกเหมารวม — คำนวณยอดหนี้รวมและค่างวดจากอัตรา % ก่อนถึงด่านตรวจค่างวด
+  // โหมดที่คิดจากอัตรา % — คำนวณยอดหนี้รวมและค่างวดจากอัตรา ก่อนถึงด่านตรวจค่างวด
   let interestRateBp = 0;
 
-  if (flatMode) {
+  if (rateMode) {
     if (type === 'floating') {
-      throw new BusinessError('ดอกลอยยังไม่รองรับโหมดดอกเหมารวม');
+      throw new BusinessError('ดอกลอยยังไม่รองรับโหมดดอกเหมารวมหรือหักดอกก่อน');
     }
     interestRateBp = Math.round(Number(input.interestRateBp));
     if (!Number.isInteger(interestRateBp) || interestRateBp < 0 || interestRateBp > 100000) {
       throw new BusinessError('อัตราดอกเบี้ยไม่ถูกต้อง (0–1000%)');
     }
-    const flat = buildFlatSchedule({
-      type, startDate, numInstallments, principalAmount, interestRateBp,
-    });
-    installmentAmount = flat.installmentAmount;
+    const built =
+      interestMode === 'flat_total'
+        ? buildFlatSchedule({ type, startDate, numInstallments, principalAmount, interestRateBp })
+        : buildDeductUpfrontSchedule({ type, startDate, numInstallments, principalAmount, interestRateBp });
+    installmentAmount = built.installmentAmount;
     // เก็บดอกต่องวดไว้เป็นค่าอ้างอิงเท่านั้น ตารางงวดจริงใช้ค่าที่กระจายแล้วรายงวด
-    interestPerInst = flat.rows[0].interest_due;
+    // (หักดอกก่อน: งวดเป็นเงินต้นล้วน ค่านี้จึงเป็น 0)
+    interestPerInst = built.rows[0].interest_due;
     if (installmentAmount <= 0) {
       throw new BusinessError('จำนวนงวดมากเกินไปจนค่างวดต่ำกว่า 1 บาท');
     }
@@ -288,10 +350,14 @@ async function normalizeContractInput(input) {
     input.docFee === undefined || input.docFee === null
       ? await getSettingInt('doc_fee')
       : assertNonNegative(input.docFee, 'ค่าทำเอกสาร');
+  // สเปกข้อ 11: "หักดอกก่อน → ไม่หักงวดแรก" — บังคับที่ระดับ domain
+  // ไม่ว่าค่าตั้งต้นของระบบหรือผู้เรียกจะส่งอะไรมา
   const deductFirst =
-    input.deductFirst === undefined
-      ? (await getSettingInt('deduct_first_installment')) === 1
-      : Boolean(input.deductFirst);
+    interestMode === 'deduct_upfront'
+      ? false
+      : input.deductFirst === undefined
+        ? (await getSettingInt('deduct_first_installment')) === 1
+        : Boolean(input.deductFirst);
 
   return {
     type,
@@ -405,8 +471,27 @@ export async function createContractInTx(input, ctx) {
     );
   }
 
-  // 4) เงินปล่อยใหม่ -> กระแสเงินสดออก (บันทึกแบบยอดเต็ม แล้วรับค่าทำเอกสาร/งวดแรกเป็นเงินเข้า
-  //    เงินสดสุทธิจึงเท่ากับเงินที่จ่ายให้ลูกค้าจริง)
+  // 3.5) ดอกหักก่อน -> รายรับ ณ วันเปิดสัญญา (สเปกข้อ 15: รับรู้ตั้งแต่เปิดสัญญา)
+  //      เป็นเงินสดจริง เพราะถูกหักออกจากเงินที่จ่ายให้ลูกค้า (คู่กับรายจ่ายเงินปล่อยข้อ 4)
+  if (preview.upfront_interest > 0) {
+    await run(
+      `INSERT INTO income_entries (entry_date, category, amount, description, contract_id, debtor_id, created_by, created_at)
+       VALUES (:d, :cat, :amt, :desc, :cid, :did, :uid, :now)`,
+      {
+        d: preview.startDate,
+        cat: UPFRONT_INTEREST_CATEGORY,
+        amt: preview.upfront_interest,
+        desc: `ดอกเบี้ยหักก่อนของสัญญา ${contractNo} (หักจากเงินที่จ่ายให้ลูกค้า ณ วันเปิดสัญญา)`,
+        cid: contractId,
+        did: input.debtorId,
+        uid: ctx?.user?.id ?? null,
+        now,
+      },
+    );
+  }
+
+  // 4) เงินปล่อยใหม่ -> กระแสเงินสดออก (บันทึกแบบยอดเต็ม แล้วรับดอกหักก่อน/ค่าทำเอกสาร/
+  //    งวดแรกเป็นเงินเข้า เงินสดสุทธิจึงเท่ากับเงินที่จ่ายให้ลูกค้าจริง)
   if (preview.gross_out > 0) {
     await run(
       `INSERT INTO expenses (entry_date, category, amount, description, contract_id, employee_id, created_by, created_at)
@@ -417,7 +502,8 @@ export async function createContractInTx(input, ctx) {
         amt: preview.gross_out,
         desc:
           `สัญญา ${contractNo} — จ่ายเงินสดให้ลูกค้าจริง ${formatBaht(preview.cash_to_customer)} บาท ` +
-          `(หักค่าทำเอกสาร ${formatBaht(preview.doc_fee)} และงวดแรก ${formatBaht(preview.first_installment)})`,
+          `(หักดอกก่อน ${formatBaht(preview.upfront_interest)} ค่าทำเอกสาร ${formatBaht(preview.doc_fee)} ` +
+          `และงวดแรก ${formatBaht(preview.first_installment)})`,
         cid: contractId,
         emp: preview.employeeId ?? debtor.employee_id ?? null,
         uid: ctx?.user?.id ?? null,
@@ -571,6 +657,21 @@ export async function contractOutstanding(contract) {
   const totalPaid = Number(paid?.p ?? 0);
   const interestPaid = Number(paid?.i ?? 0);
 
+  // โหมดหักดอกก่อน: ดอกรับรู้ไปแล้ววันเปิดสัญญา ยอดคงเหลือจึงเป็นเงินต้นล้วน
+  // ยกยอดตามสัญญา (ยอดสัญญา − ชำระสะสม) ไม่มีดอกค้างรับรู้ปนอยู่
+  if (contract.interest_mode === 'deduct_upfront') {
+    const due = await contractTotalDue(contract);
+    const carry = Math.max(0, due - totalPaid);
+    return {
+      mode: 'deduct_upfront',
+      carry,
+      total_due: due,
+      total_paid: totalPaid,
+      principal_part: carry,
+      interest_part: 0,
+    };
+  }
+
   if (contract.interest_mode !== 'flat_total') {
     return {
       mode: 'per_installment',
@@ -676,6 +777,29 @@ export async function reyod(input, ctx) {
        WHERE id = :id`,
       { id: old.id, now },
     );
+
+    // ฐานเต็มยอด (basis='full'): รายจ่ายเงินปล่อยถูกบันทึกเต็มยอดสัญญาใหม่
+    // แต่ส่วนของ "ยอดยก" ไม่ใช่เงินสดที่ออกไปจริง — ต้องบันทึกขารับคู่กัน
+    // ไม่งั้นเงินสดในบัญชีจะหายเท่ากับยอดยกทุกครั้งที่รียอด
+    // (เป็นเงินต้นรับคืน ไม่ใช่รายได้ — รายงานแยกหมวดนี้ออกจากกำไรอยู่แล้ว)
+    const carryInDisbursement = grossOut - newMoney;
+    if (carryInDisbursement > 0) {
+      await run(
+        `INSERT INTO income_entries
+           (entry_date, category, amount, description, contract_id, debtor_id, created_by, created_at)
+         VALUES (:d, :cat, :amt, :desc, :cid, :did, :uid, :now)`,
+        {
+          d: created.contract.start_date,
+          cat: REYOD_CARRY_RETURN_CATEGORY,
+          amt: carryInDisbursement,
+          desc: `ยอดยกจากสัญญา ${old.contract_no} ที่ชำระด้วยสัญญาใหม่ (ขารับคู่ของเงินปล่อยฐานเต็มยอด)`,
+          cid: old.id,
+          did: old.debtor_id,
+          uid: ctx?.user?.id ?? null,
+          now,
+        },
+      );
+    }
     // รับรู้ดอกเบี้ยของสัญญาเดิม เป็นรายได้ ณ วันที่รียอด
     //
     // สัญญาเหมารวม (สเปกข้อ 14/24): ระหว่างสัญญาไม่รับรู้ดอกเลย เงินรับเป็นแค่
@@ -687,10 +811,13 @@ export async function reyod(input, ctx) {
     //
     // ถ้าไม่รับรู้ตรงนี้ ดอกจะกลายเป็น "เงินต้น" ของสัญญาใหม่เฉย ๆ
     // แล้วหายไปจากรายงานกำไรตลอดกาล (เงินต้นรับคืนไม่นับเป็นรายได้)
+    // หักดอกก่อน: ดอกรับรู้ไปแล้ววันเปิดสัญญา (สเปกข้อ 15) — ห้ามรับรู้ซ้ำตอนรียอด
     const recognizeAmt =
-      old.interest_mode === 'flat_total'
-        ? Math.max(0, old.total_due - old.principal_amount)
-        : out.interest_part;
+      old.interest_mode === 'deduct_upfront'
+        ? 0
+        : old.interest_mode === 'flat_total'
+          ? Math.max(0, old.total_due - old.principal_amount)
+          : out.interest_part;
     if (recognizeAmt > 0) {
       await run(
         `INSERT INTO income_entries

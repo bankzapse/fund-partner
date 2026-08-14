@@ -56,7 +56,7 @@ async function reyodForm(fromContractId) {
   const installment = el('input', { type: 'number', inputmode: 'decimal', step: '0.01' });
   // สัญญาโหมดดอกเหมารวมใช้อัตรา % ไม่ใช่ค่างวดกับดอกต่องวด
   const ratePct = el('input', { type: 'number', inputmode: 'decimal', step: '0.01' });
-  let flatMode = false;
+  let oldMode = 'per_installment'; // โหมดของสัญญาเดิม — สัญญาใหม่สืบทอดโหมดเดิมเสมอ
   const interest = el('input', { type: 'number', inputmode: 'decimal', step: '0.01' });
   const periods = el('input', { type: 'number', inputmode: 'numeric' });
   const startDate = el('input', { type: 'date', value: todayISO() });
@@ -74,8 +74,13 @@ async function reyodForm(fromContractId) {
       from_contract_id: fromContractId,
       new_money: toSatang(newMoney.value),
       type: typeSel.value,
-      interest_mode: flatMode ? 'flat_total' : 'per_installment',
-      interest_rate_bp: flatMode ? Math.round(Number(ratePct.value || 0) * 100) : undefined,
+      // สืบทอดโหมดคิดดอกจากสัญญาเดิม (เหมารวม/หักดอกก่อน/ดอกต่องวด)
+      // ห้าม fallback เป็น per_installment เอง — ไม่งั้นสัญญาหักดอกก่อนจะกลายเป็นดอก 0 เงียบ ๆ
+      interest_mode: oldMode,
+      interest_rate_bp:
+        oldMode === 'flat_total' || oldMode === 'deduct_upfront'
+          ? Math.round(Number(ratePct.value || 0) * 100)
+          : undefined,
       installment_amount: toSatang(installment.value),
       interest_per_inst: toSatang(interest.value),
       num_installments: Number(periods.value || 0),
@@ -99,10 +104,11 @@ async function reyodForm(fromContractId) {
   interest.value = (old.interest_per_inst / 100).toFixed(2);
   periods.value = String(old.num_installments);
   // สืบทอดโหมดจากสัญญาเดิม แล้วซ่อนช่องที่ระบบไม่ได้ใช้ในโหมดนั้น
-  flatMode = old.interest_mode === 'flat_total';
+  oldMode = old.interest_mode ?? 'per_installment';
+  const rateMode = oldMode === 'flat_total' || oldMode === 'deduct_upfront';
   ratePct.value = ((old.interest_rate_bp ?? 0) / 100).toFixed(2);
-  rateRow.style.display = flatMode ? '' : 'none';
-  legacyRow.style.display = flatMode ? 'none' : '';
+  rateRow.style.display = rateMode ? '' : 'none';
+  legacyRow.style.display = rateMode ? 'none' : '';
 
   async function refresh() {
     installment.disabled = typeSel.value === 'floating';
@@ -116,7 +122,7 @@ async function reyodForm(fromContractId) {
         el('div', { class: 'grid k4' },
           stat('เงินต้นตามสัญญาเดิม', baht(preview.old_contract.principal_amount), { small: true }),
           stat(
-            preview.outstanding_detail?.mode === 'flat_total' ? 'ชำระมาแล้วทั้งหมด' : 'เงินต้นที่ตัดแล้ว',
+            ['flat_total', 'deduct_upfront'].includes(preview.outstanding_detail?.mode) ? 'ชำระมาแล้วทั้งหมด' : 'เงินต้นที่ตัดแล้ว',
             baht(preview.principal_paid_before), { small: true },
           ),
           stat('ยอดคงเหลือสัญญาเดิม', baht(preview.carried_outstanding ?? preview.carried_principal), { small: true, tone: 'gold' }),

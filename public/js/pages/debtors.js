@@ -156,8 +156,8 @@ export async function renderDebtorDetail({ id }) {
             el('td', { class: 'small' }, p.contract_no),
             el('td', { class: 'num' }, baht(p.amount_paid)),
             // สัญญาเหมารวม: รับชำระตามสัญญา ไม่แสดงแยกต้น/ดอก (สเปกข้อ 13)
-            el('td', { class: 'num' }, p.contract_interest_mode === 'flat_total' ? '—' : baht(p.interest_amount)),
-            el('td', { class: 'num' }, p.contract_interest_mode === 'flat_total' ? '—' : baht(p.principal_amount)),
+            el('td', { class: 'num' }, ['flat_total', 'deduct_upfront'].includes(p.contract_interest_mode) ? '—' : baht(p.interest_amount)),
+            el('td', { class: 'num' }, ['flat_total', 'deduct_upfront'].includes(p.contract_interest_mode) ? '—' : baht(p.principal_amount)),
             el('td', {}, p.is_void ? badge('void', 'ยกเลิก') : badge(p.status, PAYMENT_STATUS[p.status])),
           ),
         ),

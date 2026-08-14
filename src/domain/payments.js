@@ -142,6 +142,21 @@ export async function recordPaymentInTx(input, ctx) {
   }
 
   const amountPaid = assertNonNegative(input.amountPaid, 'ยอดจ่ายจริง'); // ข้อ 14: ห้ามรับยอดติดลบ
+
+  // สัญญาโหมดเหมา (เหมารวม/หักดอกก่อน): ตารางงวดคือภาระหนี้ทั้งหมดอยู่แล้ว
+  // จึงไม่มีแนวคิด "ตัดเงินต้นข้ามตารางงวด" — ถ้าปล่อยผ่าน เงินจะไปลด
+  // principal_remaining โดยไม่แตะงวด ทำให้สัญญาที่จ่ายครบแล้วปิดไม่ได้ตลอดกาล
+  // (refreshContractStatus ต้องการทั้งงวดครบและเงินต้นหมด) และเกิดยอดค้างผี
+  // เงินที่จ่ายเกินงวดปัจจุบันไหลไปงวดถัดไปเองอยู่แล้วตามปกติ
+  const lumpMode =
+    contract.interest_mode === 'flat_total' || contract.interest_mode === 'deduct_upfront';
+  if (lumpMode && input.extraToPrincipal === true) {
+    throw new PaymentError(
+      'สัญญาโหมดเหมารวม/หักดอกก่อนไม่ต้องใช้ตัวเลือกตัดเงินต้น — ' +
+        'ยอดที่จ่ายเกินงวดจะไหลไปตัดงวดถัดไปให้เองจนครบสัญญา',
+    );
+  }
+
   const open = await openInstallments(contract.id);
   const current = open[0] ?? null;
   const dueRemaining = current
@@ -422,6 +437,15 @@ export async function getPayment(id) {
 export async function previewPayment({ contractId, amountPaid, extraToPrincipal = false }) {
   const contract = await get(`SELECT * FROM contracts WHERE id = :id`, { id: contractId });
   if (!contract) throw new PaymentError('ไม่พบสัญญา');
+  // การ์ดเดียวกับ recordPaymentInTx — ให้หน้าจอเห็นข้อความตั้งแต่ตอน preview
+  const isLump =
+    contract.interest_mode === 'flat_total' || contract.interest_mode === 'deduct_upfront';
+  if (isLump && extraToPrincipal === true) {
+    throw new PaymentError(
+      'สัญญาโหมดเหมารวม/หักดอกก่อนไม่ต้องใช้ตัวเลือกตัดเงินต้น — ' +
+        'ยอดที่จ่ายเกินงวดจะไหลไปตัดงวดถัดไปให้เองจนครบสัญญา',
+    );
+  }
   const open = await openInstallments(contractId);
   const current = open[0] ?? null;
   const dueRemaining = current
@@ -434,10 +458,10 @@ export async function previewPayment({ contractId, amountPaid, extraToPrincipal 
     extraToPrincipal,
   });
 
-  // สัญญาเหมารวม: หน้าจอต้องแสดงเป็น "รับชำระตามสัญญา" ไม่แยกต้น/ดอก (สเปกข้อ 13)
-  // จึงส่งยอดคงเหลือตามสัญญา (ยอดหนี้รวม − ชำระสะสม) ให้หน้าจอใช้แทน
+  // สัญญาโหมดเหมา (เหมารวม/หักดอกก่อน): หน้าจอแสดงเป็น "รับชำระตามสัญญา"
+  // ไม่แยกต้น/ดอก (สเปกข้อ 13) — ส่งยอดคงเหลือตามสัญญาให้หน้าจอใช้แทน
   let contractOutstandingAfter = null;
-  if (contract.interest_mode === 'flat_total') {
+  if (contract.interest_mode === 'flat_total' || contract.interest_mode === 'deduct_upfront') {
     const paid = await get(
       `SELECT COALESCE(SUM(amount_paid), 0) AS p FROM payments
        WHERE contract_id = :cid AND is_void = 0`,
