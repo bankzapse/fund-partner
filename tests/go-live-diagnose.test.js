@@ -4,7 +4,7 @@
 // จะเสียเวลาไล่ผิดทาง เช่นไปตรวจเน็ตทั้งที่ปัญหาอยู่ที่ชื่อผู้ใช้
 process.env.FP_DB_PATH = ':memory:';
 
-import { describe, it as test, before, after } from 'node:test';
+import { describe, it as test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { diagnose } from '../scripts/go-live.mjs';

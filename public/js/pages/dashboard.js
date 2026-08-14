@@ -1,6 +1,6 @@
 // Dashboard — SRS ข้อ 5
 import {
-  api, el, stat, table, badge, baht, thaiDate, todayISO, can, toast, toastError,
+  api, el, stat, table, badge, baht, thaiDate, todayISO, can,
 } from '../core.js';
 
 export async function renderDashboard() {

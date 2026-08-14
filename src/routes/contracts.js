@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { all, get, run, insert } from '../db/index.js';
+import { all, get, insert } from '../db/index.js';
 import {
   previewContract,
   createContract,

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { db, get, all, run, insert, closeDb } from '../src/db/index.js';
+import { db, get, all, run, closeDb } from '../src/db/index.js';
 import { hashPassword } from '../src/lib/auth.js';
 import { nowISO } from '../src/lib/time.js';
 import { readXlsx, readCsv, excelSerialToDate } from '../src/lib/xlsx.js';
@@ -17,10 +17,8 @@ import {
   parseCount,
   dryRun,
   commitImport,
-  FIELDS,
 } from '../src/domain/import.js';
 import { financeSummary } from '../src/domain/reports.js';
-import { contractSummary } from '../src/domain/contracts.js';
 
 const FIXTURES = join(process.cwd(), 'tests', 'fixtures');
 let owner, ctx, ready = false;

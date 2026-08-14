@@ -1,6 +1,6 @@
 // ระบบรายรับ-รายจ่ายประจำวัน และการปิดยอด — SRS ข้อ 10
 import {
-  api, el, clear, table, badge, stat, field, modal, toast, toastError, baht, toSatang, thaiDate, todayISO, can, PAYMENT_STATUS, confirmWithReason, readFileAsDataUrl, skCard,
+  api, el, clear, table, badge, stat, field, modal, toast, toastError, baht, toSatang, todayISO, can, PAYMENT_STATUS, confirmWithReason, readFileAsDataUrl, skCard,
 } from '../core.js';
 
 export async function renderCashbook() {

@@ -193,7 +193,7 @@ async function main() {
   say(C.head('  สรุป'));
   say();
 
-  const hasData = expectedNames.some((t) => actual[t] && ['debtors', 'contracts', 'payments'].includes(t));
+  const _hasData = expectedNames.some((t) => actual[t] && ['debtors', 'contracts', 'payments'].includes(t));
   let debtorCount = 0;
   if (actual.debtors) {
     try { debtorCount = (await pool.query('SELECT count(*)::int n FROM debtors')).rows[0].n; } catch { /* ข้าม */ }

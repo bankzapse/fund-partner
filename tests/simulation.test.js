@@ -7,10 +7,10 @@ process.env.FP_DB_PATH = ':memory:';
 import { before, describe, it as test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { db, get, all, run, insert, closeDb } from '../src/db/index.js';
+import { db, get, all, run, insert } from '../src/db/index.js';
 import { hashPassword } from '../src/lib/auth.js';
-import { nowISO, addDays, addMonths } from '../src/lib/time.js';
-import { createContract, reyod, contractSummary } from '../src/domain/contracts.js';
+import { nowISO, addDays } from '../src/lib/time.js';
+import { createContract, reyod } from '../src/domain/contracts.js';
 import { recordPayment, voidPayment } from '../src/domain/payments.js';
 import { financeSummary, closeDay, debtorStatusCounts, dueToday } from '../src/domain/reports.js';
 

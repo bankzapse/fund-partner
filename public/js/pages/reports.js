@@ -1,6 +1,6 @@
 // ระบบรายงาน — SRS ข้อ 11 และ ข้อ 16
 import {
-  api, el, clear, table, badge, stat, toast, toastError, baht, thaiDate, thaiMonth, todayISO, can, barChart, skCard,
+  api, el, clear, table, stat, baht, thaiDate, thaiMonth, todayISO, can, barChart, skCard,
 } from '../core.js';
 
 const TABS = [
@@ -94,7 +94,7 @@ async function renderTab(tab, q, inputs) {
   return el('div', {});
 }
 
-async function summaryTab(q, label = 'ช่วงที่เลือก') {
+async function summaryTab(q, _label = 'ช่วงที่เลือก') {
   const d = await api.get(`/api/reports/summary?${q}`);
   const f = d.finance;
   const box = el('div', {});

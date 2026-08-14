@@ -2,7 +2,7 @@ import express from 'express';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync } from 'node:fs';
-import { ROOT, PUBLIC_DIR, UPLOAD_DIR } from './lib/paths.js';
+import { PUBLIC_DIR, UPLOAD_DIR } from './lib/paths.js';
 
 import { db, get, getSettingInt, isServerless } from './db/index.js';
 import { nowISO } from './lib/time.js';

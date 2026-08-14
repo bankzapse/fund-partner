@@ -5,7 +5,7 @@ import { before, after, describe, it as test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createApp } from '../src/server.js';
-import { db, get, run, closeDb } from '../src/db/index.js';
+import { get, run, closeDb } from '../src/db/index.js';
 import { hashPassword } from '../src/lib/auth.js';
 import { totpAt } from '../src/lib/totp.js';
 import { nowISO } from '../src/lib/time.js';

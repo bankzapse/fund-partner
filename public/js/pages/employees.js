@@ -1,6 +1,6 @@
 // ระบบพนักงานและสิทธิ์ — SRS ข้อ 12
 import {
-  api, el, clear, table, badge, field, modal, toast, toastError, thaiDate,
+  api, el, clear, table, badge, field, modal, toast, toastError,
 } from '../core.js';
 
 const ROLE_LABEL = { owner: 'เจ้าของ', manager: 'ผู้จัดการ', collector: 'พนักงานเก็บเงิน', accountant: 'บัญชี' };

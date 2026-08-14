@@ -35,6 +35,11 @@ jobs:
       - name: ติดตั้ง dependencies
         run: npm ci
 
+      # ตรวจโค้ดด้วย ESLint — จับบั๊กอย่างตัวแปรชนกัน/เรียกตัวที่ไม่มี/import ที่ไม่ได้ใช้
+      # --max-warnings 0 (ในสคริปต์ lint) ทำให้ dead code ใหม่ทำ CI แดงทันที
+      - name: ตรวจโค้ด (lint)
+        run: npm run lint
+
       # ชุดทดสอบใช้ PGlite (PostgreSQL ในหน่วยความจำ) จึงไม่ต้องมีฐานข้อมูลจริง
       # ไม่กำหนด DATABASE_URL = ระบบใช้ PGlite เอง
       - name: รันชุดทดสอบ

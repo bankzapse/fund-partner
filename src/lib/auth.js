@@ -1,6 +1,6 @@
 import bcrypt from 'bcryptjs';
 import { randomBytes } from 'node:crypto';
-import { get, run, insert, getSettingInt } from '../db/index.js';
+import { get, run, getSettingInt } from '../db/index.js';
 import { nowISO } from './time.js';
 import { audit } from './audit.js';
 import { assertNotLocked, recordFailure, clearFailures, purgeLoginAttempts } from './login-guard.js';

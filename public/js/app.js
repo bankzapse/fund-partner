@@ -1,5 +1,5 @@
 // ตัวควบคุมหน้าจอหลัก: เข้าสู่ระบบ, เมนู, และการสลับหน้า (SRS ข้อ 4)
-import { api, state, el, clear, toast, toastError, can, skeleton } from './core.js';
+import { api, state, el, clear, toastError, can, skeleton } from './core.js';
 import { renderDashboard } from './pages/dashboard.js';
 import { renderDebtors, renderDebtorDetail } from './pages/debtors.js';
 import { renderContracts, renderContractDetail, renderNewContract } from './pages/contracts.js';

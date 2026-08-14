@@ -175,7 +175,7 @@ export async function renderImport() {
     });
 
     // ตัวอย่างข้อมูลจากไฟล์
-    const previewRows = sheet.sample.map((r, i) =>
+    const previewRows = sheet.sample.map((r) =>
       el('tr', {}, sheet.headers.map((_, ci) => el('td', { class: 'small' }, r[ci] ?? ''))),
     );
 

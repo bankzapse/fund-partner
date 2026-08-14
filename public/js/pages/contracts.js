@@ -2,7 +2,7 @@
 import {
   api, state, el, clear, table, badge, stat, field, toast, toastError, baht, toSatang,
   thaiDate, todayISO, can, CONTRACT_STATUS, CONTRACT_TYPE, PAYMENT_STATUS, INSTALLMENT_STATUS,
-  BEHAVIOUR, confirmWithReason,
+  confirmWithReason,
 } from '../core.js';
 
 export async function renderContracts() {

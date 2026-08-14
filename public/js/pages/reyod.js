@@ -1,7 +1,7 @@
 // ระบบรียอด / ทำสัญญาใหม่ — SRS ข้อ 9
 import {
-  api, state, el, clear, table, badge, stat, field, toast, toastError, baht, toSatang,
-  thaiDate, todayISO, CONTRACT_TYPE, CONTRACT_STATUS,
+  api, state, el, clear, table, stat, field, toast, toastError, baht, toSatang,
+  todayISO, CONTRACT_TYPE,
 } from '../core.js';
 
 export async function renderReyod({ contractId } = {}) {

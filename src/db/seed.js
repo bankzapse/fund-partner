@@ -1,5 +1,5 @@
 import { rmSync, existsSync } from 'node:fs';
-import { db, get, run, insert, all, pgliteDir, databaseUrl, setSetting, closeDb } from './index.js';
+import { db, get, run, insert, pgliteDir, databaseUrl, setSetting, closeDb } from './index.js';
 import { hashPassword } from '../lib/auth.js';
 import { nowISO, today, addDays } from '../lib/time.js';
 import { createContract } from '../domain/contracts.js';

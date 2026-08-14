@@ -379,7 +379,7 @@ async function main() {
       try {
         const r = await pool.query('DELETE FROM employees WHERE code = $1', [code.toUpperCase()]);
         r.rowCount ? ok(`ลบ ${code.toUpperCase()} แล้ว`) : bad(`ไม่พบรหัสพนักงาน ${code}`);
-      } catch (err) {
+      } catch {
         // ลบไม่ได้เพราะยังมีลูกหนี้หรือสัญญาอ้างถึงอยู่ — บอกให้ชัดว่าทำไม
         bad(`ลบ ${code} ไม่ได้ เพราะยังมีข้อมูลอ้างถึงอยู่ (ปิดใช้งานแทนได้ที่หน้าพนักงาน)`);
       }

@@ -179,7 +179,7 @@ export function readXlsx(buffer) {
 
 /** อ่าน CSV (รองรับ BOM, เครื่องหมายคำพูด และตัวคั่น , ; tab) */
 export function readCsv(text) {
-  let s = text.replace(/^﻿/, '');
+  let s = text.replace(/^\uFEFF/, ''); // ตัด BOM (เขียนเป็น escape ชัดเจน ไม่ใช่อักขระล่องหน)
   const head = s.slice(0, s.indexOf('\n') === -1 ? s.length : s.indexOf('\n'));
   const delim = [',', ';', '\t'].reduce(
     (best, d) => ((head.split(d).length > head.split(best).length ? d : best)),

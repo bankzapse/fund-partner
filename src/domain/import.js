@@ -1,5 +1,5 @@
-import { all, get, run, insert, tx, nextCounter } from '../db/index.js';
-import { nowISO, today, isDateStr, addDays, addMonths } from '../lib/time.js';
+import { get, run, insert, tx, nextCounter } from '../db/index.js';
+import { nowISO, today, isDateStr } from '../lib/time.js';
 import { audit } from '../lib/audit.js';
 import { buildSchedule, CONTRACT_TYPES } from './contracts.js';
 
@@ -377,7 +377,7 @@ async function findEmployee(codeOrName) {
  */
 export async function commitImport({ rows, mapping, kind, options }, ctx) {
   const preview = await dryRun({ rows, mapping, kind, options });
-  const opts = withDefaults(options);
+  const _opts = withDefaults(options);
 
   return await tx(async () => {
     const summary = {
