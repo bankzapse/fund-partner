@@ -121,24 +121,30 @@ router.get(
       `SELECT * FROM contracts WHERE debtor_id = :id ORDER BY id DESC`,
       { id },
     );
-    const contracts = [];
-    for (const c of contractRows) {
-      contracts.push({
-        ...c,
-        summary: await contractSummary(c.id),
-        behaviour: await contractBehaviour(c.id),
-      });
-    }
+    // ยิงสรุป/พฤติกรรมของแต่ละสัญญาแบบขนาน แทนการวนทีละสัญญาแบบเรียงต่อกัน
+    // (ทั้งสองฟังก์ชันเป็น read-only) — ลดเวลาหน้าประวัติลูกหนี้ที่มีสัญญาหลายก้อน
+    // จากเดิม ~4×จำนวนสัญญา round-trip ที่รอกันไปเรื่อย ๆ
+    const [contracts, payments, documents, audit] = await Promise.all([
+      Promise.all(
+        contractRows.map(async (c) => {
+          const [summary, behaviour] = await Promise.all([
+            contractSummary(c.id),
+            contractBehaviour(c.id),
+          ]);
+          return { ...c, summary, behaviour };
+        }),
+      ),
+      listPayments({ debtorId: id, includeVoid: true, limit: 300 }),
+      all(`SELECT * FROM debtor_documents WHERE debtor_id = :id ORDER BY id DESC`, { id }),
+      auditTrail({ entity: 'debtor', entityId: id, limit: 50 }),
+    ]);
 
     res.json({
       debtor,
       contracts,
-      payments: await listPayments({ debtorId: id, includeVoid: true, limit: 300 }),
-      documents: (await all(
-        `SELECT * FROM debtor_documents WHERE debtor_id = :id ORDER BY id DESC`,
-        { id },
-      )).map((d) => ({ ...d, file_path: toServePath(d.file_path) })),
-      audit: await auditTrail({ entity: 'debtor', entityId: id, limit: 50 }),
+      payments,
+      documents: documents.map((d) => ({ ...d, file_path: toServePath(d.file_path) })),
+      audit,
     });
   }),
 );

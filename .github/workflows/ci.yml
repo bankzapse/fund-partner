@@ -1,0 +1,41 @@
+name: CI
+
+# รันชุดทดสอบทุกครั้งที่ push และทุก PR ที่เข้า main
+# เป็นด่านกันโค้ดที่ทำเลขเงิน/สิทธิ์/2FA พังไม่ให้หลุดขึ้น production
+# (Vercel deploy อัตโนมัติจาก main — CI นี้จึงเป็นตาข่ายก่อนถึงตรงนั้น)
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+
+# ยกเลิกรอบเก่าเมื่อมี push ใหม่บน ref เดียวกัน ประหยัดเวลา runner
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # ทดสอบทั้งเวอร์ชันขั้นต่ำที่รองรับ (engines >=22.5.0) และเวอร์ชันที่ใช้ dev/prod
+        node: ['22.x', '24.x']
+    name: test (node ${{ matrix.node }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ตั้งค่า Node ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: ติดตั้ง dependencies
+        run: npm ci
+
+      # ชุดทดสอบใช้ PGlite (PostgreSQL ในหน่วยความจำ) จึงไม่ต้องมีฐานข้อมูลจริง
+      # ไม่กำหนด DATABASE_URL = ระบบใช้ PGlite เอง
+      - name: รันชุดทดสอบ
+        run: npm test
