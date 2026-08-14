@@ -157,9 +157,14 @@ router.get(
         { label: 'ดอกเบี้ยหักก่อน', amount: f.upfront_interest_income },
         // สัญญาเหมารวมรับรู้ดอกตอนปิด/รียอด (สเปกข้อ 14) — เป็นรายได้ก้อนหลักของกำไร
         { label: 'ดอกเบี้ยรับรู้ (ปิด/รียอด)', amount: f.recognized_interest_income },
-        { label: 'ค่าทำเอกสาร', amount: f.doc_fee_income },
         { label: 'รายได้อื่น', amount: f.other_income },
       ],
+      // ค่าทำสัญญาไม่ใช่รายได้กิจการ (สเปกข้อ 21) — แสดงแยกเป็นเงินถือแทนพนักงาน
+      doc_fee_flow: {
+        collected: f.doc_fee_collected,
+        paid_out: f.doc_fee_paid_out,
+        note: 'ค่าทำสัญญาเป็นรายได้ของพนักงานผู้เปิดสัญญา กิจการถือเงินแทนจนกว่าจะจ่าย',
+      },
       total_revenue: f.real_income,
       expenses: (await breakdown({ from, to })).expenses,
       total_expense: f.operating_expense,
@@ -188,7 +193,8 @@ router.get(
       ['ดอกเบี้ยรับ', f.interest_income],
       ['ดอกเบี้ยหักก่อน', f.upfront_interest_income],
       ['ดอกเบี้ยรับรู้ (ปิด/รียอด)', f.recognized_interest_income],
-      ['ค่าทำเอกสาร', f.doc_fee_income],
+      ['ค่าทำสัญญาที่รับแทนพนักงาน (ไม่ใช่รายได้กิจการ)', f.doc_fee_collected],
+      ['ค่าทำสัญญาที่จ่ายให้พนักงานแล้ว', f.doc_fee_paid_out],
       ['รายได้อื่น', f.other_income],
       ['รายได้จริง', f.real_income],
       ['ค่าใช้จ่ายดำเนินงาน', f.operating_expense],

@@ -346,10 +346,13 @@ async function normalizeContractInput(input) {
 
   if (installmentAmount <= 0) throw new BusinessError('ค่างวดต้องมากกว่า 0');
 
+  // สเปกข้อ 18/21: "ดอกลอยไม่มีค่าทำสัญญา" — บังคับ 0 ไม่ว่าจะตั้งค่าระบบไว้เท่าไร
   const docFee =
-    input.docFee === undefined || input.docFee === null
-      ? await getSettingInt('doc_fee')
-      : assertNonNegative(input.docFee, 'ค่าทำเอกสาร');
+    type === 'floating'
+      ? 0
+      : input.docFee === undefined || input.docFee === null
+        ? await getSettingInt('doc_fee')
+        : assertNonNegative(input.docFee, 'ค่าทำเอกสาร');
   // สเปกข้อ 11: "หักดอกก่อน → ไม่หักงวดแรก" — บังคับที่ระดับ domain
   // ไม่ว่าค่าตั้งต้นของระบบหรือผู้เรียกจะส่งอะไรมา
   const deductFirst =
@@ -373,6 +376,7 @@ async function normalizeContractInput(input) {
     grossOut: input.grossOut,
     debtorId: input.debtorId,
     employeeId: input.employeeId ?? null,
+    openedByEmployeeId: input.openedByEmployeeId ?? null,
     note: input.note ?? null,
   };
 }
@@ -410,16 +414,19 @@ export async function createContractInTx(input, ctx) {
        (contract_no, debtor_id, employee_id, type, principal_amount, installment_amount,
         interest_per_inst, num_installments, period_unit, start_date, doc_fee,
         first_inst_deducted, cash_disbursed, principal_remaining,
-        interest_mode, interest_rate_bp, total_due, status, note,
+        interest_mode, interest_rate_bp, total_due, opened_by_employee_id, status, note,
         created_by, created_at, updated_at)
      VALUES
        (:no, :debtor, :emp, :type, :principal, :inst, :interest, :n, :unit, :start, :fee,
         :first, :cash, :principal,
-        :mode, :rate_bp, :total_due, 'active', :note, :uid, :now, :now)`,
+        :mode, :rate_bp, :total_due, :openedBy, 'active', :note, :uid, :now, :now)`,
     {
       no: contractNo,
       debtor: input.debtorId,
       emp: preview.employeeId ?? debtor.employee_id ?? null,
+      // ค่าทำสัญญาเป็นของพนักงานผู้เปิดสัญญา (สเปกข้อ 21/29)
+      // ไม่ระบุ = พนักงานผู้ดูแลลูกหนี้เป็นผู้เปิด
+      openedBy: preview.openedByEmployeeId ?? preview.employeeId ?? debtor.employee_id ?? null,
       type: preview.type,
       principal: preview.principalAmount,
       inst: preview.installmentAmount,
@@ -765,6 +772,9 @@ export async function reyod(input, ctx) {
         // สืบทอดโหมดคิดดอกและอัตราจากสัญญาเดิม (เหตุผลเดียวกับใน reyodPreview)
         interestMode: input.interestMode ?? old.interest_mode ?? 'per_installment',
         interestRateBp: input.interestRateBp ?? old.interest_rate_bp ?? 0,
+        // ค่าทำสัญญาของสัญญาใหม่เป็นของพนักงานผู้ทำรียอด (ระบุได้) ไม่งั้นตามสัญญาเดิม
+        openedByEmployeeId:
+          input.openedByEmployeeId ?? old.opened_by_employee_id ?? old.employee_id ?? null,
         note: input.note ?? `รียอดจากสัญญา ${old.contract_no}`,
       },
       ctx,

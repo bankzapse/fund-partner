@@ -162,6 +162,8 @@ function mapContractBody(b = {}) {
   return {
     debtorId: intParam(b.debtor_id),
     employeeId: intParam(b.employee_id, null),
+    // พนักงานผู้เปิดสัญญา — เจ้าของค่าทำสัญญา (สเปกข้อ 21/29) ไม่ระบุ = ผู้ดูแลลูกหนี้
+    openedByEmployeeId: intParam(b.opened_by_employee_id, null),
     type: b.type,
     principalAmount: intParam(b.principal_amount, 0),
     installmentAmount: intParam(b.installment_amount, 0),
@@ -180,6 +182,7 @@ function mapContractBody(b = {}) {
 function mapReyodBody(b = {}) {
   return {
     fromContractId: intParam(b.from_contract_id),
+    openedByEmployeeId: intParam(b.opened_by_employee_id, null),
     newMoney: intParam(b.new_money, 0),
     type: b.type,
     installmentAmount: b.installment_amount === undefined ? undefined : intParam(b.installment_amount),

@@ -103,6 +103,9 @@ CREATE TABLE IF NOT EXISTS contracts (
   -- ยอดหนี้รวมตามสัญญา (เงินต้น + ดอกทั้งหมด) บันทึกไว้ตอนทำสัญญา
   -- 0 = สัญญาที่สร้างก่อนมีโหมดนี้ ให้คำนวณจากตารางงวดแทน
   total_due           BIGINT  NOT NULL DEFAULT 0,
+  -- พนักงานผู้เปิดสัญญา (สเปกข้อ 29) — เจ้าของ "ค่าทำสัญญา" (ข้อ 21)
+  -- แยกจาก employee_id (ผู้ดูแลลูกหนี้) และ created_by (ผู้ใช้ที่กดบันทึก)
+  opened_by_employee_id INTEGER REFERENCES employees(id),
   status              TEXT    NOT NULL DEFAULT 'active'
                       CHECK (status IN ('active','completed','closed_reyod','cancelled')),
   closed_at           TEXT,
@@ -310,6 +313,9 @@ ALTER TABLE contracts ADD COLUMN IF NOT EXISTS total_due BIGINT NOT NULL DEFAULT
 -- ในยอดที่ยกไปตอนรียอด มีดอกเบี้ยเดิมที่ยังไม่ได้รับรู้ปนอยู่เท่าไร
 -- เก็บไว้เพื่อตรวจสอบย้อนหลังได้ว่ารายได้ที่รับรู้ตอนรียอดมาจากไหน
 ALTER TABLE contract_links ADD COLUMN IF NOT EXISTS carried_interest BIGINT NOT NULL DEFAULT 0;
+
+-- พนักงานผู้เปิดสัญญา (สเปกข้อ 21/29) — สัญญาเก่าที่เป็น NULL ใช้ employee_id แทน
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS opened_by_employee_id INTEGER REFERENCES employees(id);
 
 -- ยืนยันตัวตนสองชั้น (TOTP) — เพิ่มให้ฐานข้อมูลเดิมที่สร้างก่อนมีฟีเจอร์นี้
 ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret   TEXT;

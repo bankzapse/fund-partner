@@ -272,9 +272,13 @@ describe('จำลองธุรกิจจริง 90 วัน', () => {
        WHERE is_void = 0 AND category = 'doc_fee' AND entry_date BETWEEN :from AND :to`, { from, to });
 
     assert.equal(f.interest_income, Number(interest.v));
-    assert.equal(f.doc_fee_income, Number(docFee.v));
-    assert.equal(f.real_income, f.interest_income + f.doc_fee_income + f.other_income,
-      'รายได้จริงต้องมีแค่ ดอก + ค่าเอกสาร + อื่น ๆ');
+    // สเปกข้อ 21: ค่าทำสัญญาเป็นของพนักงานผู้เปิดสัญญา — กิจการถือแทน ไม่ใช่รายได้
+    assert.equal(f.doc_fee_collected, Number(docFee.v), 'ยอดรับแทนต้องตรงกับรายการจริง');
+    assert.equal(
+      f.real_income,
+      f.interest_income + f.other_income + f.upfront_interest_income + f.recognized_interest_income,
+      'รายได้จริง = ดอกต่องวด + อื่น ๆ + ดอกหักก่อน + ดอกรับรู้ (ไม่มีค่าทำสัญญา)',
+    );
     assert.equal(f.net_profit, f.real_income - f.operating_expense);
 
     // เงินทุนตั้งต้น 500,000 ต้องไม่โผล่ในรายได้
@@ -320,7 +324,8 @@ describe('จำลองธุรกิจจริง 90 วัน', () => {
 
   test('รียอดกลางคัน: ยอดใหม่ถูกต้องและเงินต้นไม่หายไปจากระบบ', async () => {
     const target = await get(
-      `SELECT * FROM contracts WHERE status = 'active' AND principal_remaining > 10000 LIMIT 1`);
+      `SELECT * FROM contracts WHERE status = 'active' AND principal_remaining > 10000
+       ORDER BY id LIMIT 1`);
     assert.ok(target, 'ต้องมีสัญญาที่ยังผ่อนอยู่');
 
     const before = await financeSummary({ from: '1900-01-01', to: '2999-12-31' });
@@ -339,9 +344,15 @@ describe('จำลองธุรกิจจริง 90 วัน', () => {
     const firstInst = r.preview.first_installment;
     const expectedDelta = newMoney - (r.preview.principalAmount > 0
       ? Math.min(firstInst - r.new_contract.interest_per_inst, carried + newMoney) : 0);
-    assert.ok(
-      after.principal_outstanding > before.principal_outstanding,
-      'เงินต้นคงเหลือรวมควรเพิ่มขึ้นหลังรียอดพร้อมเงินเพิ่ม');
+    // invariant ที่แท้จริง: เงินต้นคงเหลือรวมเปลี่ยน = เงินเพิ่มใหม่ − เงินต้นที่งวดแรกตัดทันที
+    // (งวดแรกใหญ่พอ ๆ กับเงินเพิ่มได้ → delta = 0 ก็ถูกต้อง — ห้าม assert ว่าต้อง > เสมอ)
+    const firstPrincipal = await get(
+      `SELECT COALESCE(SUM(principal_amount),0) v FROM payments
+       WHERE contract_id = :c AND is_void = 0`, { c: r.new_contract.id });
+    assert.equal(
+      after.principal_outstanding - before.principal_outstanding,
+      newMoney - Number(firstPrincipal.v),
+      'เงินต้นคงเหลือรวมต้องเปลี่ยนเท่ากับ เงินเพิ่ม − เงินต้นที่งวดแรกตัด (ไม่มีเงินหาย/งอก)');
     void expectedDelta;
   });
 

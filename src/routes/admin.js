@@ -9,6 +9,7 @@ import { reyod } from '../domain/contracts.js';
 import { wrap, need, intParam } from './_helpers.js';
 import { lockedAccounts, unlockUser } from '../lib/login-guard.js';
 import { reset2FA } from '../lib/twofactor.js';
+import { docFeeBalances, docFeeDetail, recordDocFeePayout } from '../domain/docfee.js';
 
 const router = Router();
 
@@ -317,6 +318,42 @@ router.post(
       ip: req.ctx.ip,
     });
     res.json({ approval: after, result });
+  }),
+);
+
+// ---- ค่าทำสัญญาของพนักงานผู้เปิดสัญญา (สเปกข้อ 21/29) ----------------------
+// รับแทนสะสม / จ่ายแล้ว / ค้างจ่าย ต่อพนักงาน + บันทึกการจ่าย (ห้ามเกินยอดค้าง)
+
+router.get(
+  '/doc-fees',
+  need('employees_manage'),
+  wrap(async (_req, res) => {
+    res.json({ items: await docFeeBalances() });
+  }),
+);
+
+router.get(
+  '/doc-fees/:employeeId',
+  need('employees_manage'),
+  wrap(async (req, res) => {
+    res.json(await docFeeDetail(intParam(req.params.employeeId)));
+  }),
+);
+
+router.post(
+  '/doc-fees/payout',
+  need('employees_manage'),
+  wrap(async (req, res) => {
+    const entry = await recordDocFeePayout(
+      {
+        employeeId: intParam(req.body?.employee_id),
+        amount: intParam(req.body?.amount, 0),
+        payoutDate: req.body?.payout_date,
+        note: req.body?.note,
+      },
+      req.ctx,
+    );
+    res.status(201).json({ entry });
   }),
 );
 

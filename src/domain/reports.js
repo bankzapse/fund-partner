@@ -1,4 +1,4 @@
-import { all, get, run, tx, DISBURSE_CATEGORY, CAPITAL_OUT_CATEGORY, CAPITAL_IN_CATEGORY, REYOD_INTEREST_CATEGORY, CLOSE_INTEREST_CATEGORY, UPFRONT_INTEREST_CATEGORY, REYOD_CARRY_RETURN_CATEGORY } from '../db/index.js';
+import { all, get, run, tx, DISBURSE_CATEGORY, CAPITAL_OUT_CATEGORY, CAPITAL_IN_CATEGORY, REYOD_INTEREST_CATEGORY, CLOSE_INTEREST_CATEGORY, UPFRONT_INTEREST_CATEGORY, REYOD_CARRY_RETURN_CATEGORY, DOC_FEE_PAYOUT_CATEGORY } from '../db/index.js';
 import { today, nowISO, monthRange, yearRange, addDays } from '../lib/time.js';
 import { audit } from '../lib/audit.js';
 
@@ -37,7 +37,9 @@ export async function financeSummary({ from, to, employeeId = null }) {
 
   const incomeP = get(
     `SELECT
-       COALESCE(SUM(CASE WHEN i.category = 'doc_fee' THEN i.amount ELSE 0 END), 0) AS doc_fee_income,
+       -- ค่าทำสัญญา (สเปกข้อ 21): เงินที่กิจการ "ถือแทนพนักงานผู้เปิดสัญญา"
+       -- อยู่ในกระแสเงินสด (ถูกหักจากเงินที่จ่ายลูกค้า) แต่ไม่ใช่รายได้กิจการ
+       COALESCE(SUM(CASE WHEN i.category = 'doc_fee' THEN i.amount ELSE 0 END), 0) AS doc_fee_collected,
        COALESCE(SUM(CASE WHEN i.category = :capIn  THEN i.amount ELSE 0 END), 0) AS capital_in,
        COALESCE(SUM(CASE WHEN i.category NOT IN ('doc_fee', :capIn, :reyodInt, :closeInt, :upfrontInt, :carryRet) THEN i.amount ELSE 0 END), 0) AS other_income,
        -- ดอกที่รับรู้ตอนรียอด/ตอนปิดสัญญา เป็นรายได้ทางบัญชี แต่ไม่มีเงินสดเคลื่อนไหวจริง
@@ -69,12 +71,14 @@ export async function financeSummary({ from, to, employeeId = null }) {
     `SELECT
        COALESCE(SUM(CASE WHEN e.category = :disb  THEN e.amount ELSE 0 END), 0) AS disbursed,
        COALESCE(SUM(CASE WHEN e.category = :capOut THEN e.amount ELSE 0 END), 0) AS capital_out,
-       COALESCE(SUM(CASE WHEN e.category NOT IN (:disb, :capOut) THEN e.amount ELSE 0 END), 0) AS operating_expense,
+       -- จ่ายค่าทำสัญญาให้พนักงาน = ชำระเงินที่ถือแทนอยู่ ไม่ใช่ต้นทุนดำเนินงาน
+       COALESCE(SUM(CASE WHEN e.category = :feePayout THEN e.amount ELSE 0 END), 0) AS doc_fee_paid_out,
+       COALESCE(SUM(CASE WHEN e.category NOT IN (:disb, :capOut, :feePayout) THEN e.amount ELSE 0 END), 0) AS operating_expense,
        COALESCE(SUM(e.amount), 0) AS total_expense
      FROM expenses e
      WHERE e.is_void = 0 AND e.entry_date BETWEEN :from AND :to
        ${employeeId ? 'AND e.employee_id = :emp' : ''}`,
-    { from, to, disb: DISBURSE_CATEGORY, capOut: CAPITAL_OUT_CATEGORY, emp: employeeId },
+    { from, to, disb: DISBURSE_CATEGORY, capOut: CAPITAL_OUT_CATEGORY, feePayout: DOC_FEE_PAYOUT_CATEGORY, emp: employeeId },
   );
 
   const contractsP = get(
@@ -110,8 +114,11 @@ export async function financeSummary({ from, to, employeeId = null }) {
   const totalOut = exp.total_expense;
   // แต่ในเชิงกำไรต้องนับ ไม่งั้นดอกก้อนนี้จะหายจากรายงานตลอดกาล
   // ดอกหักก่อนเป็นรายได้เงินสดตอนเปิดสัญญา นับทั้งกระแสเงินสดและกำไร
+  //
+  // ค่าทำสัญญา "ไม่อยู่" ในกำไรกิจการ (สเปกข้อ 21: เป็นรายได้ของพนักงานผู้เปิดสัญญา)
+  // และการจ่ายให้พนักงานก็ไม่ใช่ค่าใช้จ่าย — ทั้งคู่เป็นแค่เงินผ่านมือกิจการ
   const realIncome =
-    pay.interest_income + income.doc_fee_income + income.other_income +
+    pay.interest_income + income.other_income +
     income.upfront_interest_income + nonCashIncome;
   const netProfit = realIncome - exp.operating_expense;
 
@@ -129,7 +136,9 @@ export async function financeSummary({ from, to, employeeId = null }) {
     net_cash: totalIn - totalOut,
     // รายได้ / กำไร
     interest_income: pay.interest_income,
-    doc_fee_income: income.doc_fee_income,
+    // ค่าทำสัญญา: เงินถือแทนพนักงาน (เงินสดเข้า/ออก แต่ไม่แตะกำไร)
+    doc_fee_collected: income.doc_fee_collected,
+    doc_fee_paid_out: exp.doc_fee_paid_out,
     other_income: income.other_income,
     capital_in: income.capital_in,
     capital_out: exp.capital_out,
@@ -327,7 +336,6 @@ export async function breakdown({ from, to }) {
     { category: 'ดอกเบี้ย', amount: s.interest_income },
     { category: 'ดอกเบี้ยหักก่อน', amount: s.upfront_interest_income },
     { category: 'ดอกเบี้ยรับรู้ (ปิด/รียอด)', amount: s.recognized_interest_income },
-    { category: 'ค่าทำเอกสาร', amount: s.doc_fee_income },
     { category: 'รายได้อื่น', amount: s.other_income },
   ].filter((r) => r.amount > 0);
   return { income, expenses };

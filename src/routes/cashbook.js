@@ -6,6 +6,28 @@ import { assertNonNegative } from '../lib/money.js';
 import { financeSummary, closingPreview, closeDay, reopenDay } from '../domain/reports.js';
 import { listPayments } from '../domain/payments.js';
 import { wrap, need, saveDataUrl, intParam, sendCsv } from './_helpers.js';
+import {
+  CLOSE_INTEREST_CATEGORY,
+  UPFRONT_INTEREST_CATEGORY,
+  REYOD_CARRY_RETURN_CATEGORY,
+  DOC_FEE_PAYOUT_CATEGORY,
+} from '../db/index.js';
+
+// หมวดที่ระบบสร้างเอง — ห้ามกรอกมือจากสมุดเงินสด ไม่งั้นปลอมกำไร/ยอดค้างพนักงานได้
+// (เช่น กรอกรายรับหมวด "ดอกเบี้ยรับรู้..." เอง = เพิ่มกำไรปลอม,
+//  กรอกรายจ่าย "จ่ายค่าทำสัญญาให้พนักงาน" เอง = ข้ามด่านห้ามจ่ายเกินยอดค้าง)
+const RESERVED_CATEGORIES = new Set([
+  'doc_fee',
+  CLOSE_INTEREST_CATEGORY,
+  UPFRONT_INTEREST_CATEGORY,
+  REYOD_CARRY_RETURN_CATEGORY,
+  DOC_FEE_PAYOUT_CATEGORY,
+]);
+
+function isReservedCategory(cat) {
+  const c = String(cat ?? '').trim();
+  return RESERVED_CATEGORIES.has(c) || c.includes('ดอกเบี้ยรับรู้');
+}
 
 const router = Router();
 
@@ -56,6 +78,9 @@ router.post(
     const b = req.body ?? {};
     const amount = assertNonNegative(intParam(b.amount, 0), 'จำนวนเงิน');
     if (amount === 0) return res.status(400).json({ error: 'จำนวนเงินต้องมากกว่า 0' });
+    if (isReservedCategory(b.category)) {
+      return res.status(400).json({ error: 'หมวดนี้ระบบบันทึกให้อัตโนมัติ กรอกมือไม่ได้' });
+    }
     const entryDate = b.entry_date ?? today();
     await assertDayOpen(entryDate, req.ctx.user);
 
@@ -98,6 +123,9 @@ router.post(
     const b = req.body ?? {};
     const amount = assertNonNegative(intParam(b.amount, 0), 'จำนวนเงิน');
     if (amount === 0) return res.status(400).json({ error: 'จำนวนเงินต้องมากกว่า 0' });
+    if (isReservedCategory(b.category)) {
+      return res.status(400).json({ error: 'หมวดนี้ระบบบันทึกให้อัตโนมัติ กรอกมือไม่ได้' });
+    }
     const entryDate = b.entry_date ?? today();
     await assertDayOpen(entryDate, req.ctx.user);
 

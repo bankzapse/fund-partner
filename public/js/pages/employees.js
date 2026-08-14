@@ -1,6 +1,6 @@
 // ระบบพนักงานและสิทธิ์ — SRS ข้อ 12
 import {
-  api, el, clear, table, badge, field, modal, toast, toastError,
+  api, el, clear, table, badge, field, modal, toast, toastError, baht, toSatang,
 } from '../core.js';
 
 const ROLE_LABEL = { owner: 'เจ้าของ', manager: 'ผู้จัดการ', collector: 'พนักงานเก็บเงิน', accountant: 'บัญชี' };
@@ -10,10 +10,11 @@ export async function renderEmployees() {
   const body = el('div', {});
 
   async function load() {
-    const [users, employees, locked] = await Promise.all([
+    const [users, employees, locked, docFees] = await Promise.all([
       api.get('/api/admin/users'),
       api.get('/api/admin/employees'),
       api.get('/api/admin/locked-accounts'),
+      api.get('/api/admin/doc-fees').catch(() => ({ items: [] })),
     ]);
 
     clear(body).append(
@@ -93,6 +94,7 @@ export async function renderEmployees() {
           ),
         ),
       ),
+      docFeeCard(docFees.items, load),
       permissionMatrixCard(),
     );
   }
@@ -145,6 +147,56 @@ function lockedCard(items, onDone) {
           }, 'ปลดล็อกเดี๋ยวนี้')),
         ),
       ),
+    ),
+  );
+}
+
+/**
+ * ค่าทำสัญญาของพนักงานผู้เปิดสัญญา (สเปกข้อ 21)
+ * กิจการถือเงินแทนจนกว่าจะจ่าย — ห้ามจ่ายเกินยอดค้าง (ระบบกันให้)
+ */
+function docFeeCard(items, onDone) {
+  const rows = (items ?? []).filter((r) => r.collected > 0 || r.paid_out > 0);
+  return el(
+    'div',
+    { class: 'card' },
+    el('h3', {}, 'ค่าทำสัญญาของพนักงาน (รับแทน / จ่ายแล้ว / ค้างจ่าย)'),
+    el('div', { class: 'hint' },
+      'ค่าทำสัญญาที่หักจากลูกค้าเป็นรายได้ของพนักงานผู้เปิดสัญญา กิจการถือเงินไว้แทนจนกว่าจะจ่าย ' +
+      'ไม่ถูกนับเป็นรายได้หรือค่าใช้จ่ายของกิจการ'),
+    table(
+      ['พนักงาน', { label: 'รับแทนสะสม', num: true }, { label: 'จ่ายแล้ว', num: true }, { label: 'ค้างจ่าย', num: true }, ''],
+      rows.map((r) =>
+        el(
+          'tr',
+          {},
+          el('td', {}, `${r.full_name} (${r.code})`),
+          el('td', { class: 'num' }, baht(r.collected)),
+          el('td', { class: 'num' }, baht(r.paid_out)),
+          el('td', { class: 'num' }, r.owed > 0 ? el('strong', {}, baht(r.owed)) : baht(r.owed)),
+          el('td', {},
+            r.owed > 0
+              ? el('button', {
+                  class: 'btn sm',
+                  onclick: async () => {
+                    const input = prompt(
+                      `จ่ายค่าทำสัญญาให้ ${r.full_name}\nค้างจ่าย ${baht(r.owed)} บาท — กรอกจำนวนที่จ่าย (บาท)`,
+                      (r.owed / 100).toFixed(2),
+                    );
+                    if (input === null) return;
+                    try {
+                      await api.post('/api/admin/doc-fees/payout', {
+                        employee_id: r.employee_id, amount: toSatang(input),
+                      });
+                      toast(`จ่ายค่าทำสัญญาให้ ${r.full_name} แล้ว`, 'ok');
+                      onDone();
+                    } catch (err) { toastError(err); }
+                  },
+                }, 'จ่าย')
+              : null),
+        ),
+      ),
+      'ยังไม่มีค่าทำสัญญาที่รับแทนพนักงาน',
     ),
   );
 }
