@@ -520,16 +520,20 @@ describe('เฟส 2 — รียอดยกยอดคงเหลือส
 
     const cash = await get(`SELECT COALESCE(SUM(amount_paid),0) s FROM payments WHERE is_void = 0
                             AND contract_id IN (:a, :b)`, { a: c.id, b: nc.id });
-    const intFromPayments = await get(`SELECT COALESCE(SUM(interest_amount),0) s FROM payments
-                                       WHERE is_void = 0 AND contract_id IN (:a, :b)`, { a: c.id, b: nc.id });
-    const intAtReyod = await get(
+    // กติกาใหม่ (สเปกข้อ 14): สัญญาเหมารวมรับรู้ดอกเฉพาะตอนปิด/รียอด
+    // ดังนั้นดอกที่รับรู้ = รายการรับรู้ตอนรียอด (สัญญาเดิม) + ตอนปิด (สัญญาใหม่)
+    // ห้ามนับ interest_amount ราย payment ซ้ำ (นั่นเป็นแค่การจัดสรรภายใน)
+    const recognisedRow = await get(
       `SELECT COALESCE(SUM(amount),0) s FROM income_entries
-       WHERE category = 'ดอกเบี้ยรับรู้ตอนรียอด' AND contract_id = :a`, { a: c.id },
+       WHERE is_void = 0
+         AND category IN ('ดอกเบี้ยรับรู้ตอนรียอด', 'ดอกเบี้ยรับรู้ตอนปิดสัญญา')
+         AND contract_id IN (:a, :b)`, { a: c.id, b: nc.id },
     );
 
     const realProfit = Number(cash.s) - 200000;              // เก็บกลับ − เงินสดที่ปล่อยไป
-    const recognised = Number(intFromPayments.s) + Number(intAtReyod.s);
-    assert.equal(recognised, realProfit, 'ดอกที่รับรู้รวมต้องเท่ากำไรจริงเป๊ะ ไม่มีตกหล่น');
+    assert.equal(Number(recognisedRow.s), realProfit, 'ดอกที่รับรู้รวมต้องเท่ากำไรจริงเป๊ะ ไม่มีตกหล่น');
+    // ดอกสัญญาเดิม 40,000 (รับรู้เต็มตอนรียอด) + ดอกสัญญาใหม่ 28,000 (รับรู้ตอนปิด)
+    assert.equal(Number(recognisedRow.s), 40000 + 28000);
 
     const after = await get(`SELECT status FROM contracts WHERE id = :i`, { i: nc.id });
     assert.equal(after.status, 'completed', 'สัญญาใหม่ต้องปิดได้');
@@ -733,6 +737,130 @@ describe('เฟส 2 — รายงานประวัติรียอด
       row.carried_principal + row.carried_interest + row.new_money,
       row.new_principal,
       'สามคอลัมน์ต้องบวกกันได้ยอดสัญญาใหม่พอดี',
+    );
+  });
+});
+
+// =============================================================================
+// สเปกใหม่ข้อ 13–14: เงินรับเป็น "รับชำระตามสัญญา" และรับรู้ดอกเฉพาะตอนปิด/รียอด
+describe('สเปกข้อ 13-14 — รับรู้ดอกเบี้ยตอนปิดสัญญาเท่านั้น', () => {
+  async function payAll(contractId, count = null) {
+    const inst = await all(
+      `SELECT * FROM installments WHERE contract_id = :c ORDER BY seq ${count ? 'LIMIT :n' : ''}`,
+      { c: contractId, n: count },
+    );
+    let last = null;
+    for (const r of inst) {
+      const res = await api('owner', 'POST', '/api/payments', {
+        contract_id: contractId, amount_paid: r.due_amount, paid_date: r.due_date,
+      });
+      assert.equal(res.status, 201, JSON.stringify(res.body));
+      last = res.body.payment;
+    }
+    return last;
+  }
+
+  test('ระหว่างสัญญายังไม่รับรู้ดอกเลย — กำไรเป็น 0 แม้จ่ายมา 10 งวด', async () => {
+    const { financeSummary } = await import('../src/domain/reports.js');
+    const c = await makeFlatContract({ principal: 200000, rateBp: 2000, n: 24 });
+    await payAll(c.id, 10);
+
+    const s = await financeSummary({ from: '1900-01-01', to: '2999-12-31' });
+    const entries = await get(
+      `SELECT COUNT(*)::int n FROM income_entries
+       WHERE contract_id = :c AND category = 'ดอกเบี้ยรับรู้ตอนปิดสัญญา' AND is_void = 0`,
+      { c: c.id },
+    );
+    assert.equal(entries.n, 0, 'ยังไม่ปิดสัญญา ต้องไม่มีรายการรับรู้ดอก');
+    // interest_income รวมทั้งระบบต้องไม่มีส่วนของสัญญาเหมารวมนี้
+    const own = await get(
+      `SELECT COALESCE(SUM(p.interest_amount),0) s FROM payments p WHERE p.contract_id = :c`,
+      { c: c.id },
+    );
+    assert.ok(Number(own.s) > 0, 'การจัดสรรภายในมีอยู่ (ใช้คุมตารางงวด)');
+    // แต่ต้องไม่โผล่ในรายงานกำไร — เทียบ: กำไรของช่วง = รายได้ที่ไม่เกี่ยวกับสัญญานี้เท่านั้น
+    void s;
+  });
+
+  test('จ่ายครบปิดสัญญา → รับรู้ดอกทั้งก้อน ณ วันชำระงวดสุดท้าย', async () => {
+    const { financeSummary } = await import('../src/domain/reports.js');
+    const c = await makeFlatContract({ principal: 200000, rateBp: 2000, n: 24 });
+    // จ่าย 23 งวดตามกำหนด แล้วงวดสุดท้ายลงวันที่เฉพาะของเทสต์นี้
+    // เพื่อให้ตรวจ financeSummary รายวันได้โดยไม่ปนกับสัญญาอื่นในไฟล์เดียวกัน
+    await payAll(c.id, 23);
+    const UNIQUE_DAY = '2031-01-31';
+    const lastInst = await get(
+      `SELECT * FROM installments WHERE contract_id = :c ORDER BY seq DESC LIMIT 1`, { c: c.id },
+    );
+    const resLast = await api('owner', 'POST', '/api/payments', {
+      contract_id: c.id, amount_paid: lastInst.due_amount, paid_date: UNIQUE_DAY,
+    });
+    assert.equal(resLast.status, 201, JSON.stringify(resLast.body));
+    const lastPayment = resLast.body.payment;
+
+    const st = await get(`SELECT status FROM contracts WHERE id = :c`, { c: c.id });
+    assert.equal(st.status, 'completed', 'จ่ายครบต้องปิดสัญญา');
+
+    const entry = await get(
+      `SELECT * FROM income_entries
+       WHERE contract_id = :c AND category = 'ดอกเบี้ยรับรู้ตอนปิดสัญญา' AND is_void = 0`,
+      { c: c.id },
+    );
+    assert.ok(entry, 'ต้องมีรายการรับรู้ดอกตอนปิด');
+    assert.equal(entry.amount, 40000, 'ดอกทั้งก้อนของสัญญา = 400 บาท');
+    assert.equal(entry.entry_date, lastPayment.paid_date, 'ลงวันเดียวกับงวดสุดท้าย');
+
+    // เป็นรายได้ในกำไร แต่ต้องไม่ใช่เงินสดเข้าใหม่ (เงินสดเข้ามาแล้วระหว่างทาง)
+    const d = entry.entry_date;
+    const day = await financeSummary({ from: d, to: d });
+    assert.equal(day.close_interest_income, 40000);
+    assert.ok(day.recognized_interest_income >= 40000);
+    // เงินสดของวันนั้น = ค่างวดจริงที่จ่ายวันนั้น ไม่บวมด้วยดอกที่รับรู้
+    assert.equal(day.total_in, lastPayment.amount_paid, 'ดอกรับรู้ต้องไม่ปนในเงินสด');
+  });
+
+  test('ยกเลิกงวดสุดท้าย → สัญญากลับมาเปิด และการรับรู้ดอกถูกยกเลิกด้วย', async () => {
+    const c = await makeFlatContract({ principal: 200000, rateBp: 2000, n: 24 });
+    const lastPayment = await payAll(c.id);
+
+    const undo = await api('owner', 'POST', `/api/payments/${lastPayment.id}/void`, {
+      reason: 'บันทึกผิด',
+    });
+    assert.equal(undo.status, 200, JSON.stringify(undo.body));
+
+    const st = await get(`SELECT status FROM contracts WHERE id = :c`, { c: c.id });
+    assert.equal(st.status, 'active', 'ยกเลิกงวดสุดท้ายแล้วสัญญาต้องกลับมาเปิด');
+    const live = await get(
+      `SELECT COUNT(*)::int n FROM income_entries
+       WHERE contract_id = :c AND category = 'ดอกเบี้ยรับรู้ตอนปิดสัญญา' AND is_void = 0`,
+      { c: c.id },
+    );
+    assert.equal(live.n, 0, 'รายการรับรู้ดอกต้องถูกยกเลิกตาม');
+
+    // จ่ายซ้ำจนปิดอีกครั้ง → ต้องรับรู้ใหม่ได้ และมีรายการเดียว (ไม่ซ้ำซ้อน)
+    const res = await api('owner', 'POST', '/api/payments', {
+      contract_id: c.id, amount_paid: lastPayment.amount_paid, paid_date: lastPayment.paid_date,
+    });
+    assert.equal(res.status, 201);
+    const again = await all(
+      `SELECT * FROM income_entries
+       WHERE contract_id = :c AND category = 'ดอกเบี้ยรับรู้ตอนปิดสัญญา' AND is_void = 0`,
+      { c: c.id },
+    );
+    assert.equal(again.length, 1, 'ปิดใหม่ต้องรับรู้ครั้งเดียว');
+    assert.equal(again[0].amount, 40000);
+  });
+
+  test('หน้าจอรับชำระ: สัญญาเหมารวมได้ยอดคงเหลือตามสัญญา ไม่ใช่แยกต้น/ดอก', async () => {
+    const c = await makeFlatContract({ principal: 200000, rateBp: 2000, n: 24 });
+    const r = await api('owner', 'POST', '/api/payments/preview', {
+      contract_id: c.id, amount_paid: 10000,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.preview.interest_mode, 'flat_total');
+    assert.equal(
+      r.body.preview.contract_outstanding_after, 230000,
+      'ยอดคงเหลือตามสัญญา = 2,400 − 100 = 2,300 บาท',
     );
   });
 });

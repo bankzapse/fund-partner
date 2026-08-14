@@ -676,12 +676,22 @@ export async function reyod(input, ctx) {
        WHERE id = :id`,
       { id: old.id, now },
     );
-    // รับรู้ดอกเบี้ยเดิมที่ยังไม่ได้รับรู้ เป็นรายได้ ณ วันที่รียอด
+    // รับรู้ดอกเบี้ยของสัญญาเดิม เป็นรายได้ ณ วันที่รียอด
     //
-    // จำเป็นเพราะยอดที่ยกไปกลายเป็น "เงินต้น" ของสัญญาใหม่ตามที่ผู้ใช้กำหนด
-    // ถ้าไม่รับรู้ตรงนี้ ดอกก้อนนี้จะหายไปจากรายงานกำไรตลอดกาล
-    // (เงินต้นรับคืนไม่นับเป็นรายได้ตาม SRS ข้อ 14)
-    if (out.interest_part > 0) {
+    // สัญญาเหมารวม (สเปกข้อ 14/24): ระหว่างสัญญาไม่รับรู้ดอกเลย เงินรับเป็นแค่
+    // "รับชำระตามสัญญา" — เมื่อรียอดจึงรับรู้ "ดอกตามสัญญาเดิมทั้งก้อน"
+    // (ตัวอย่างสเปก: 2,000+400 ส่งแล้ว 1,000 → รียอด → รับรู้ดอก 400 เต็ม)
+    //
+    // โหมดดอกต่องวดแบบเดิม: ดอกของงวดที่จ่ายแล้วถูกรับรู้ต่อรายการรับไปแล้ว
+    // จึงรับรู้เฉพาะส่วนที่ยังไม่ถึงงวด (out.interest_part) เหมือนเดิม
+    //
+    // ถ้าไม่รับรู้ตรงนี้ ดอกจะกลายเป็น "เงินต้น" ของสัญญาใหม่เฉย ๆ
+    // แล้วหายไปจากรายงานกำไรตลอดกาล (เงินต้นรับคืนไม่นับเป็นรายได้)
+    const recognizeAmt =
+      old.interest_mode === 'flat_total'
+        ? Math.max(0, old.total_due - old.principal_amount)
+        : out.interest_part;
+    if (recognizeAmt > 0) {
       await run(
         `INSERT INTO income_entries
            (entry_date, category, amount, description, contract_id, debtor_id, created_by, created_at)
@@ -691,8 +701,11 @@ export async function reyod(input, ctx) {
           // จะแตกเป็นสองวัน คนละงวดบัญชีกับรายการอื่นของการรียอดเดียวกัน
           d: created.contract.start_date,
           cat: REYOD_INTEREST_CATEGORY,
-          amt: out.interest_part,
-          desc: `ดอกเบี้ยคงเหลือจากสัญญา ${old.contract_no} ที่ยกไปเป็นยอดตั้งต้นสัญญาใหม่`,
+          amt: recognizeAmt,
+          desc:
+            old.interest_mode === 'flat_total'
+              ? `ดอกเบี้ยตามสัญญา ${old.contract_no} รับรู้เมื่อรียอด`
+              : `ดอกเบี้ยคงเหลือจากสัญญา ${old.contract_no} ที่ยกไปเป็นยอดตั้งต้นสัญญาใหม่`,
           cid: old.id,
           did: old.debtor_id,
           uid: ctx?.user?.id ?? null,

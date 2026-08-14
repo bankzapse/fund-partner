@@ -91,11 +91,18 @@ async function paymentPanel(contractId) {
         extra_to_principal: extraToPrincipal.checked,
       });
       submit.disabled = false;
+      // สัญญาเหมารวม: เงินรับเป็น "รับชำระตามสัญญา" ไม่แสดงแยกต้น/ดอก (สเปกข้อ 13)
+      // แสดงยอดคงเหลือตามสัญญาแทน — ลูกค้าเข้าใจง่ายและตรงกติกา
+      const flat = p.interest_mode === 'flat_total';
       clear(result).append(
-        el('div', { class: 'kv' }, el('span', { class: 'k' }, 'ยอดจ่ายจริง'), el('span', { class: 'v' }, baht(p.amount_paid))),
-        el('div', { class: 'kv' }, el('span', { class: 'k' }, 'ตัดดอกเบี้ย'), el('span', { class: 'v' }, baht(p.interest_amount))),
-        el('div', { class: 'kv' }, el('span', { class: 'k' }, 'ตัดเงินต้น'), el('span', { class: 'v' }, baht(p.principal_amount))),
-        el('div', { class: 'kv' }, el('span', { class: 'k' }, 'เงินต้นคงเหลือหลังบันทึก'), el('span', { class: 'v' }, baht(p.principal_remaining_after))),
+        el('div', { class: 'kv' }, el('span', { class: 'k' }, flat ? 'รับชำระตามสัญญา' : 'ยอดจ่ายจริง'), el('span', { class: 'v' }, baht(p.amount_paid))),
+        ...(flat
+          ? [el('div', { class: 'kv' }, el('span', { class: 'k' }, 'ยอดคงเหลือตามสัญญาหลังบันทึก'), el('span', { class: 'v' }, baht(p.contract_outstanding_after)))]
+          : [
+              el('div', { class: 'kv' }, el('span', { class: 'k' }, 'ตัดดอกเบี้ย'), el('span', { class: 'v' }, baht(p.interest_amount))),
+              el('div', { class: 'kv' }, el('span', { class: 'k' }, 'ตัดเงินต้น'), el('span', { class: 'v' }, baht(p.principal_amount))),
+              el('div', { class: 'kv' }, el('span', { class: 'k' }, 'เงินต้นคงเหลือหลังบันทึก'), el('span', { class: 'v' }, baht(p.principal_remaining_after))),
+            ]),
         el('div', { class: 'kv total' }, el('span', { class: 'k' }, 'สถานะที่จะบันทึก'),
           el('span', { class: 'v' }, badge(p.status, PAYMENT_STATUS[p.status]))),
       );
@@ -108,13 +115,15 @@ async function paymentPanel(contractId) {
   amount.addEventListener('input', preview);
   extraToPrincipal.addEventListener('change', preview);
 
+  // สัญญาเหมารวมไม่มีแนวคิด "จ่ายเฉพาะดอก" — เงินรับเป็นรับชำระตามสัญญาอย่างเดียว
+  const isFlat = c.interest_mode === 'flat_total';
   const quickButtons = el(
     'div',
     { class: 'quick' },
     el('button', {
       class: 'btn', onclick: () => { amount.value = ((due?.due_remaining ?? 0) / 100).toFixed(2); preview(); },
     }, 'จ่ายเต็ม'),
-    el('button', {
+    isFlat ? null : el('button', {
       class: 'btn gold', onclick: () => { amount.value = ((due?.interest_remaining ?? 0) / 100).toFixed(2); preview(); },
     }, 'เฉพาะดอก'),
     el('button', {
@@ -230,9 +239,17 @@ async function paymentPanel(contractId) {
           tone: 'gold',
           foot: due ? `งวดที่ ${due.seq} ครบกำหนด ${thaiDate(due.due_date)}` : 'ชำระครบทุกงวดแล้ว',
         }),
-        stat('ดอกเบี้ยที่ควรตัด', baht(due?.interest_remaining ?? 0), { small: true }),
-        stat('เงินต้นที่ควรตัด', baht(due?.principal_remaining_this ?? 0), { small: true }),
-        stat('เงินต้นคงเหลือ', baht(s.principal_remaining), { small: true }),
+        // สัญญาเหมารวม: ไม่แสดงแยกต้น/ดอก (สเปกข้อ 13) — แสดงยอดตามสัญญาแทน
+        ...(isFlat
+          ? [
+              stat('รับชำระสะสม', baht(s.total_paid), { small: true }),
+              stat('ยอดคงเหลือตามสัญญา', baht(Math.max(0, (c.total_due ?? 0) - s.total_paid)), { small: true }),
+            ]
+          : [
+              stat('ดอกเบี้ยที่ควรตัด', baht(due?.interest_remaining ?? 0), { small: true }),
+              stat('เงินต้นที่ควรตัด', baht(due?.principal_remaining_this ?? 0), { small: true }),
+              stat('เงินต้นคงเหลือ', baht(s.principal_remaining), { small: true }),
+            ]),
       ),
       s.arrears_amount > 0
         ? el('div', { class: 'warn mt' }, `ค้างชำระ ${s.arrears_installments} งวด รวม ${baht(s.arrears_amount)} บาท`)
@@ -258,8 +275,11 @@ async function paymentPanel(contractId) {
       'div',
       { class: 'card' },
       el('h3', {}, 'รายการล่าสุดของสัญญานี้'),
+      // สัญญาเหมารวม: รับชำระตามสัญญา ไม่แสดงคอลัมน์แยกต้น/ดอก (สเปกข้อ 13)
       table(
-        ['วันที่', 'ใบรับเงิน', { label: 'จ่ายจริง', num: true }, { label: 'ดอก', num: true }, { label: 'ต้น', num: true }, 'สถานะ'],
+        isFlat
+          ? ['วันที่', 'ใบรับเงิน', { label: 'รับชำระตามสัญญา', num: true }, 'สถานะ']
+          : ['วันที่', 'ใบรับเงิน', { label: 'จ่ายจริง', num: true }, { label: 'ดอก', num: true }, { label: 'ต้น', num: true }, 'สถานะ'],
         ctx.recent.map((p) =>
           el(
             'tr',
@@ -267,8 +287,8 @@ async function paymentPanel(contractId) {
             el('td', { class: 'small nowrap' }, thaiDate(p.paid_date)),
             el('td', { class: 'small' }, p.receipt_no),
             el('td', { class: 'num' }, baht(p.amount_paid)),
-            el('td', { class: 'num' }, baht(p.interest_amount)),
-            el('td', { class: 'num' }, baht(p.principal_amount)),
+            isFlat ? null : el('td', { class: 'num' }, baht(p.interest_amount)),
+            isFlat ? null : el('td', { class: 'num' }, baht(p.principal_amount)),
             el('td', {}, badge(p.status, PAYMENT_STATUS[p.status])),
           ),
         ),

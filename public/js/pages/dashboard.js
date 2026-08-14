@@ -56,7 +56,8 @@ export async function renderDashboard() {
       'div',
       { class: 'grid k4' },
       stat('เงินที่เก็บได้วันนี้', baht(t.cash_from_debtors), { foot: `${t.payment_count} รายการ` }),
-      stat('ดอกเบี้ยที่ได้รับ', baht(t.interest_income), { small: true }),
+      // ดอกเบี้ยที่รับรู้ = ดอกต่อรายการรับ (โหมดเดิม) + ดอกรับรู้ตอนปิด/รียอด (เหมารวม)
+      stat('ดอกเบี้ยที่รับรู้', baht(t.interest_income + (t.recognized_interest_income ?? 0)), { small: true }),
       stat('ค่าทำเอกสาร', baht(t.doc_fee_income), { small: true }),
       stat('ค่าใช้จ่าย', baht(t.operating_expense), { small: true }),
       showProfit

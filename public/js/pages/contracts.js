@@ -364,8 +364,9 @@ export async function renderContractDetail({ id }) {
             el('td', { class: 'small' }, p.receipt_no),
             el('td', { class: 'num' }, baht(p.due_amount)),
             el('td', { class: 'num' }, baht(p.amount_paid)),
-            el('td', { class: 'num' }, baht(p.interest_amount)),
-            el('td', { class: 'num' }, baht(p.principal_amount)),
+            // สัญญาเหมารวม: รับชำระตามสัญญา ไม่แสดงแยกต้น/ดอก (สเปกข้อ 13)
+            el('td', { class: 'num' }, c.interest_mode === 'flat_total' ? '—' : baht(p.interest_amount)),
+            el('td', { class: 'num' }, c.interest_mode === 'flat_total' ? '—' : baht(p.principal_amount)),
             el('td', {}, p.is_void ? badge('void', 'ยกเลิกแล้ว') : badge(p.status, PAYMENT_STATUS[p.status])),
             el('td', { class: 'small' }, p.received_by_name ?? '-'),
             el(

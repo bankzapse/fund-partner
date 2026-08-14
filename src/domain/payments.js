@@ -1,4 +1,4 @@
-import { all, get, run, insert, tx, nextCounter, FREE_PAY_CATEGORY } from '../db/index.js';
+import { all, get, run, insert, tx, nextCounter, FREE_PAY_CATEGORY, CLOSE_INTEREST_CATEGORY } from '../db/index.js';
 import { assertNonNegative, assertPositive, formatBaht } from '../lib/money.js';
 import { today, nowISO, isDateStr, addDays, addMonths } from '../lib/time.js';
 import { audit } from '../lib/audit.js';
@@ -193,7 +193,7 @@ export async function recordPaymentInTx(input, ctx) {
 
   await applyAllocations(allocations, +1);
   await updatePrincipal(contract.id, -principalTotal);
-  await refreshContractStatus(contract.id);
+  await refreshContractStatus(contract.id, ctx);
 
   const payment = await getPayment(paymentId);
   await audit({
@@ -259,7 +259,7 @@ async function updatePrincipal(contractId, delta) {
 }
 
 /** ปิดสัญญาอัตโนมัติเมื่อชำระครบทุกงวดและเงินต้นเป็นศูนย์ */
-async function refreshContractStatus(contractId) {
+async function refreshContractStatus(contractId, ctx) {
   const c = await get(`SELECT * FROM contracts WHERE id = :id`, { id: contractId });
   if (c.status === 'closed_reyod' || c.status === 'cancelled') return;
   const openRow = await get(
@@ -278,6 +278,62 @@ async function refreshContractStatus(contractId) {
         closed: done ? nowISO() : null,
         now: nowISO(),
       },
+    );
+  }
+  // สัญญาเหมารวม: รับรู้/ถอนการรับรู้ดอกเบี้ยตามสถานะปิด (สเปกข้อ 14)
+  await syncCloseInterestRecognition(c, done, ctx);
+}
+
+/**
+ * รับรู้ดอกเบี้ยของสัญญาเหมารวม "ตอนปิดสัญญา" (สเปกข้อ 14)
+ *
+ * ระหว่างสัญญา เงินที่ลูกหนี้ส่งเป็น "รับชำระตามสัญญา" ไม่ถูกนับเป็นรายได้ดอกเบี้ย
+ * เมื่อจ่ายครบจนสัญญาปิด จึงบันทึกดอกทั้งก้อนของสัญญา (ยอดหนี้รวม − เงินต้น)
+ * เป็นรายได้ ณ วันที่ชำระงวดสุดท้าย
+ *
+ * ทำแบบ idempotent: เรียกซ้ำได้เสมอ —
+ *   - ปิดแล้วแต่ยังไม่มีรายการ  → สร้าง
+ *   - กลับมาเปิด (จากการยกเลิกรายการรับเงิน) แต่รายการยังอยู่ → ยกเลิกรายการ
+ * จึงถูกต้องเองในทุกเส้นทาง ไม่ต้องพึ่งลำดับการเรียก
+ */
+async function syncCloseInterestRecognition(contract, done, ctx) {
+  if (contract.interest_mode !== 'flat_total') return;
+  const interestTotal = contract.total_due - contract.principal_amount;
+  if (interestTotal <= 0) return;
+
+  const existing = await get(
+    `SELECT id FROM income_entries
+     WHERE contract_id = :cid AND category = :cat AND is_void = 0`,
+    { cid: contract.id, cat: CLOSE_INTEREST_CATEGORY },
+  );
+
+  if (done && !existing) {
+    // วันที่รับรู้ = วันชำระล่าสุดที่ทำให้สัญญาปิด ไม่ใช่วันที่กดบันทึก
+    // เพื่อให้รายการลงงวดบัญชีเดียวกับเงินงวดสุดท้าย (การลงย้อนหลังจะไม่แตกวัน)
+    const last = await get(
+      `SELECT MAX(paid_date) AS d FROM payments WHERE contract_id = :cid AND is_void = 0`,
+      { cid: contract.id },
+    );
+    await run(
+      `INSERT INTO income_entries
+         (entry_date, category, amount, description, contract_id, debtor_id, created_by, created_at)
+       VALUES (:d, :cat, :amt, :desc, :cid, :did, :uid, :now)`,
+      {
+        d: last?.d ?? today(),
+        cat: CLOSE_INTEREST_CATEGORY,
+        amt: interestTotal,
+        desc: `ดอกเบี้ยตามสัญญา ${contract.contract_no} รับรู้เมื่อชำระครบปิดสัญญา`,
+        cid: contract.id,
+        did: contract.debtor_id,
+        uid: ctx?.user?.id ?? null,
+        now: nowISO(),
+      },
+    );
+  } else if (!done && existing) {
+    // สัญญากลับมาเปิด (เช่น ยกเลิกรายการรับเงินงวดสุดท้าย) — ดอกยังไม่ถือว่ารับรู้
+    await run(
+      `UPDATE income_entries SET is_void = 1, void_reason = :r WHERE id = :id`,
+      { id: existing.id, r: 'สัญญากลับมาเปิดจากการยกเลิกรายการรับเงิน ดอกเบี้ยจึงยังไม่รับรู้' },
     );
   }
 }
@@ -330,7 +386,7 @@ export async function voidPayment({ paymentId, reason }, ctx) {
        WHERE id = :id`,
       { id: paymentId, reason, uid: ctx?.user?.id ?? null, now },
     );
-    await refreshContractStatus(payment.contract_id);
+    await refreshContractStatus(payment.contract_id, ctx);
 
     const after = await getPayment(paymentId);
     await audit({
@@ -377,12 +433,27 @@ export async function previewPayment({ contractId, amountPaid, extraToPrincipal 
     principalRemaining: contract.principal_remaining,
     extraToPrincipal,
   });
+
+  // สัญญาเหมารวม: หน้าจอต้องแสดงเป็น "รับชำระตามสัญญา" ไม่แยกต้น/ดอก (สเปกข้อ 13)
+  // จึงส่งยอดคงเหลือตามสัญญา (ยอดหนี้รวม − ชำระสะสม) ให้หน้าจอใช้แทน
+  let contractOutstandingAfter = null;
+  if (contract.interest_mode === 'flat_total') {
+    const paid = await get(
+      `SELECT COALESCE(SUM(amount_paid), 0) AS p FROM payments
+       WHERE contract_id = :cid AND is_void = 0`,
+      { cid: contract.id },
+    );
+    contractOutstandingAfter = Math.max(0, contract.total_due - paid.p - amountPaid);
+  }
+
   return {
     due_remaining: dueRemaining,
     amount_paid: amountPaid,
     interest_amount: interestTotal,
     principal_amount: principalTotal,
     principal_remaining_after: contract.principal_remaining - principalTotal,
+    interest_mode: contract.interest_mode,
+    contract_outstanding_after: contractOutstandingAfter,
     status: classifyPayment({ amountPaid, dueRemaining, interestTotal, principalTotal }),
     allocations,
   };
@@ -419,7 +490,8 @@ export async function listPayments(filter = {}) {
   params.limit = filter.limit ?? 200;
 
   const rows = await all(
-    `SELECT p.*, c.contract_no, d.full_name AS debtor_name, d.code AS debtor_code,
+    `SELECT p.*, c.contract_no, c.interest_mode AS contract_interest_mode,
+            d.full_name AS debtor_name, d.code AS debtor_code,
             u.full_name AS received_by_name
      FROM payments p
      JOIN contracts c ON c.id = p.contract_id

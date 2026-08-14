@@ -1,4 +1,4 @@
-import { all, get, run, tx, DISBURSE_CATEGORY, CAPITAL_OUT_CATEGORY, CAPITAL_IN_CATEGORY, REYOD_INTEREST_CATEGORY } from '../db/index.js';
+import { all, get, run, tx, DISBURSE_CATEGORY, CAPITAL_OUT_CATEGORY, CAPITAL_IN_CATEGORY, REYOD_INTEREST_CATEGORY, CLOSE_INTEREST_CATEGORY } from '../db/index.js';
 import { today, nowISO, monthRange, yearRange, addDays } from '../lib/time.js';
 import { audit } from '../lib/audit.js';
 
@@ -20,7 +20,11 @@ export async function financeSummary({ from, to, employeeId = null }) {
   const payP = get(
     `SELECT
        COALESCE(SUM(p.amount_paid), 0)      AS cash_from_debtors,
-       COALESCE(SUM(p.interest_amount), 0)  AS interest_income,
+       -- สัญญาเหมารวม (flat_total) ไม่รับรู้ดอกต่อรายการรับ (สเปกข้อ 13-14)
+       -- ดอกของสัญญาแบบนั้นจะเข้ากำไรผ่านรายการ "ดอกเบี้ยรับรู้ตอนปิด/รียอด" แทน
+       -- ส่วนที่แบ่งต้น/ดอกใน payments ของสัญญาเหมารวมเป็นแค่การจัดสรรภายในเพื่อคุมตารางงวด
+       COALESCE(SUM(CASE WHEN c.interest_mode <> 'flat_total' THEN p.interest_amount ELSE 0 END), 0)
+         AS interest_income,
        COALESCE(SUM(p.principal_amount), 0) AS principal_back,
        COUNT(*)                             AS payment_count,
        COALESCE(SUM(CASE WHEN p.status = 'full'          THEN 1 ELSE 0 END), 0) AS full_count,
@@ -35,17 +39,25 @@ export async function financeSummary({ from, to, employeeId = null }) {
     `SELECT
        COALESCE(SUM(CASE WHEN i.category = 'doc_fee' THEN i.amount ELSE 0 END), 0) AS doc_fee_income,
        COALESCE(SUM(CASE WHEN i.category = :capIn  THEN i.amount ELSE 0 END), 0) AS capital_in,
-       COALESCE(SUM(CASE WHEN i.category NOT IN ('doc_fee', :capIn, :reyodInt) THEN i.amount ELSE 0 END), 0) AS other_income,
-       -- ดอกที่รับรู้ตอนรียอดเป็นรายได้ทางบัญชี แต่ไม่มีเงินสดเคลื่อนไหวจริง
+       COALESCE(SUM(CASE WHEN i.category NOT IN ('doc_fee', :capIn, :reyodInt, :closeInt) THEN i.amount ELSE 0 END), 0) AS other_income,
+       -- ดอกที่รับรู้ตอนรียอด/ตอนปิดสัญญา เป็นรายได้ทางบัญชี แต่ไม่มีเงินสดเคลื่อนไหวจริง
+       -- (ตอนรียอด: กลายเป็นยอดหนี้สัญญาใหม่ / ตอนปิด: เงินสดเข้ามาก่อนแล้วระหว่างสัญญา)
        -- จึงต้องแยกออกมา ไม่นับรวมในกระแสเงินสด
        COALESCE(SUM(CASE WHEN i.category = :reyodInt THEN i.amount ELSE 0 END), 0) AS reyod_interest_income,
+       COALESCE(SUM(CASE WHEN i.category = :closeInt THEN i.amount ELSE 0 END), 0) AS close_interest_income,
        COALESCE(SUM(i.amount), 0) AS total_income_entries
      FROM income_entries i
      WHERE i.is_void = 0 AND i.entry_date BETWEEN :from AND :to
      ${employeeId ? `AND EXISTS (
        SELECT 1 FROM contracts c2 WHERE c2.id = i.contract_id AND c2.employee_id = :emp
      )` : ''}`,
-    { from, to, capIn: CAPITAL_IN_CATEGORY, reyodInt: REYOD_INTEREST_CATEGORY, emp: employeeId },
+    {
+      from, to,
+      capIn: CAPITAL_IN_CATEGORY,
+      reyodInt: REYOD_INTEREST_CATEGORY,
+      closeInt: CLOSE_INTEREST_CATEGORY,
+      emp: employeeId,
+    },
   );
 
   const expP = get(
@@ -84,10 +96,11 @@ export async function financeSummary({ from, to, employeeId = null }) {
     payP, incomeP, expP, contractsP, outstandingP,
   ]);
 
-  // ดอกที่รับรู้ตอนรียอดไม่ใช่เงินสด — ลูกหนี้ไม่ได้จ่ายเงินเข้ามา
-  // เป็นแค่การบันทึกว่าดอกก้อนนั้นกลายเป็นส่วนหนึ่งของยอดหนี้สัญญาใหม่แล้ว
-  // ถ้านับรวมในกระแสเงินสด ยอดปิดวันจะขาดเท่ากับก้อนนี้ทุกครั้งที่มีการรียอด
-  const nonCashIncome = income.reyod_interest_income;
+  // ดอกที่รับรู้ตอนรียอด/ตอนปิดสัญญาไม่ใช่เงินสด ณ วันที่รับรู้
+  //   - ตอนรียอด: ดอกกลายเป็นส่วนหนึ่งของยอดหนี้สัญญาใหม่ ลูกหนี้ไม่ได้จ่ายเงินเข้ามา
+  //   - ตอนปิด:   เงินสดทยอยเข้ามาก่อนแล้วระหว่างสัญญา (ถูกนับใน cash_from_debtors ไปแล้ว)
+  // ถ้านับรวมในกระแสเงินสด ยอดปิดวันจะเกิน/ขาดเท่ากับก้อนนี้ทุกครั้ง
+  const nonCashIncome = income.reyod_interest_income + income.close_interest_income;
   const totalIn = pay.cash_from_debtors + income.total_income_entries - nonCashIncome;
   const totalOut = exp.total_expense;
   // แต่ในเชิงกำไรต้องนับ ไม่งั้นดอกก้อนนี้จะหายจากรายงานตลอดกาล
@@ -101,7 +114,10 @@ export async function financeSummary({ from, to, employeeId = null }) {
     // กระแสเงินสด
     total_in: totalIn,
     total_out: totalOut,
-    reyod_interest_income: nonCashIncome,
+    // ดอกที่รับรู้แบบไม่ใช่เงินสด (รียอด + ปิดสัญญา) — แยกให้เห็นทั้งก้อนรวมและรายส่วน
+    recognized_interest_income: nonCashIncome,
+    reyod_interest_income: income.reyod_interest_income,
+    close_interest_income: income.close_interest_income,
     net_cash: totalIn - totalOut,
     // รายได้ / กำไร
     interest_income: pay.interest_income,
@@ -301,6 +317,7 @@ export async function breakdown({ from, to }) {
   const s = await financeSummary({ from, to });
   const income = [
     { category: 'ดอกเบี้ย', amount: s.interest_income },
+    { category: 'ดอกเบี้ยรับรู้ (ปิด/รียอด)', amount: s.recognized_interest_income },
     { category: 'ค่าทำเอกสาร', amount: s.doc_fee_income },
     { category: 'รายได้อื่น', amount: s.other_income },
   ].filter((r) => r.amount > 0);
