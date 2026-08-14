@@ -10,6 +10,7 @@ import { renderReports } from './pages/reports.js';
 import { renderEmployees } from './pages/employees.js';
 import { renderSettings, renderPricingAdmin } from './pages/settings.js';
 import { renderImport } from './pages/import.js';
+import { renderWithdraw } from './pages/withdraw.js';
 
 const app = document.getElementById('app');
 
@@ -22,6 +23,7 @@ const MENU = [
   { path: '/reyod', label: 'รียอด', cap: 'reyod', render: renderReyod },
   { path: '/cashbook', label: 'รายรับ-รายจ่าย', cap: 'cashbook', render: renderCashbook, skel: 'dashboard' },
   { path: '/reports', label: 'รายงาน', cap: 'reports_view', render: renderReports, skel: 'dashboard' },
+  { path: '/withdraw', label: 'ถอนเงิน', cap: 'settings_manage', render: renderWithdraw, skel: 'dashboard' },
   { path: '/employees', label: 'พนักงาน', cap: 'employees_manage', render: renderEmployees },
   { path: '/import', label: 'นำเข้าข้อมูล', cap: 'settings_manage', render: renderImport, skel: 'form' },
   { path: '/settings', label: 'ตั้งค่า', cap: 'settings_manage', render: renderSettings, skel: 'form' },

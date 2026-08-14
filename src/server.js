@@ -24,6 +24,7 @@ import reportRoutes from './routes/reports.js';
 import adminRoutes from './routes/admin.js';
 import dashboardRoutes from './routes/dashboard.js';
 import importRoutes from './routes/import.js';
+import withdrawRoutes from './routes/withdraw.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -133,6 +134,7 @@ export async function createApp() {
   app.use('/api/reports', reportRoutes);
   app.use('/api/admin', adminRoutes);
   app.use('/api/import', importRoutes);
+  app.use('/api/withdraw', withdrawRoutes);
 
   // ไฟล์แนบเป็นข้อมูลอ่อนไหว (สำเนาบัตรประชาชน หลักฐานการเงิน)
   // ต้องผ่านด่านล็อกอินก่อนเสมอ ไม่งั้นใครมี URL ก็เปิดดูได้ทันที

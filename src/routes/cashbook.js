@@ -11,6 +11,8 @@ import {
   UPFRONT_INTEREST_CATEGORY,
   REYOD_CARRY_RETURN_CATEGORY,
   DOC_FEE_PAYOUT_CATEGORY,
+  WITHDRAW_INTEREST_CATEGORY,
+  WITHDRAW_FLOATING_CATEGORY,
 } from '../db/index.js';
 
 // หมวดที่ระบบสร้างเอง — ห้ามกรอกมือจากสมุดเงินสด ไม่งั้นปลอมกำไร/ยอดค้างพนักงานได้
@@ -22,6 +24,9 @@ const RESERVED_CATEGORIES = new Set([
   UPFRONT_INTEREST_CATEGORY,
   REYOD_CARRY_RETURN_CATEGORY,
   DOC_FEE_PAYOUT_CATEGORY,
+  // ถอนดอกเบี้ย/ดอกลอยต้องผ่านเมนูถอนเงินเท่านั้น (มีด่านกันถอนเกิน — ข้อ 38)
+  WITHDRAW_INTEREST_CATEGORY,
+  WITHDRAW_FLOATING_CATEGORY,
 ]);
 
 function isReservedCategory(cat) {

@@ -1,4 +1,4 @@
-import { all, get, run, tx, DISBURSE_CATEGORY, CAPITAL_OUT_CATEGORY, CAPITAL_IN_CATEGORY, REYOD_INTEREST_CATEGORY, CLOSE_INTEREST_CATEGORY, UPFRONT_INTEREST_CATEGORY, REYOD_CARRY_RETURN_CATEGORY, DOC_FEE_PAYOUT_CATEGORY } from '../db/index.js';
+import { all, get, run, tx, DISBURSE_CATEGORY, CAPITAL_OUT_CATEGORY, CAPITAL_IN_CATEGORY, REYOD_INTEREST_CATEGORY, CLOSE_INTEREST_CATEGORY, UPFRONT_INTEREST_CATEGORY, REYOD_CARRY_RETURN_CATEGORY, DOC_FEE_PAYOUT_CATEGORY, WITHDRAW_INTEREST_CATEGORY, WITHDRAW_FLOATING_CATEGORY } from '../db/index.js';
 import { today, nowISO, monthRange, yearRange, addDays } from '../lib/time.js';
 import { audit } from '../lib/audit.js';
 
@@ -73,12 +73,20 @@ export async function financeSummary({ from, to, employeeId = null }) {
        COALESCE(SUM(CASE WHEN e.category = :capOut THEN e.amount ELSE 0 END), 0) AS capital_out,
        -- จ่ายค่าทำสัญญาให้พนักงาน = ชำระเงินที่ถือแทนอยู่ ไม่ใช่ต้นทุนดำเนินงาน
        COALESCE(SUM(CASE WHEN e.category = :feePayout THEN e.amount ELSE 0 END), 0) AS doc_fee_paid_out,
-       COALESCE(SUM(CASE WHEN e.category NOT IN (:disb, :capOut, :feePayout) THEN e.amount ELSE 0 END), 0) AS operating_expense,
+       -- ถอนดอกเบี้ย/ดอกลอยออกใช้ (สเปกข้อ 33): เจ้าของนำกำไรที่รับรู้แล้วออกไป
+       -- เงินสดออกจริง แต่ไม่ใช่ต้นทุน — ห้ามปนกับค่าใช้จ่ายดำเนินงาน
+       COALESCE(SUM(CASE WHEN e.category IN (:wInt, :wFloat) THEN e.amount ELSE 0 END), 0) AS interest_withdrawn,
+       COALESCE(SUM(CASE WHEN e.category NOT IN (:disb, :capOut, :feePayout, :wInt, :wFloat) THEN e.amount ELSE 0 END), 0) AS operating_expense,
        COALESCE(SUM(e.amount), 0) AS total_expense
      FROM expenses e
      WHERE e.is_void = 0 AND e.entry_date BETWEEN :from AND :to
        ${employeeId ? 'AND e.employee_id = :emp' : ''}`,
-    { from, to, disb: DISBURSE_CATEGORY, capOut: CAPITAL_OUT_CATEGORY, feePayout: DOC_FEE_PAYOUT_CATEGORY, emp: employeeId },
+    {
+      from, to,
+      disb: DISBURSE_CATEGORY, capOut: CAPITAL_OUT_CATEGORY, feePayout: DOC_FEE_PAYOUT_CATEGORY,
+      wInt: WITHDRAW_INTEREST_CATEGORY, wFloat: WITHDRAW_FLOATING_CATEGORY,
+      emp: employeeId,
+    },
   );
 
   const contractsP = get(
@@ -139,6 +147,7 @@ export async function financeSummary({ from, to, employeeId = null }) {
     // ค่าทำสัญญา: เงินถือแทนพนักงาน (เงินสดเข้า/ออก แต่ไม่แตะกำไร)
     doc_fee_collected: income.doc_fee_collected,
     doc_fee_paid_out: exp.doc_fee_paid_out,
+    interest_withdrawn: exp.interest_withdrawn,
     other_income: income.other_income,
     capital_in: income.capital_in,
     capital_out: exp.capital_out,
