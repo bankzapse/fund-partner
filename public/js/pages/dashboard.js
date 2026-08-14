@@ -1,6 +1,6 @@
 // Dashboard — SRS ข้อ 5
 import {
-  api, el, stat, table, badge, baht, thaiDate, todayISO, can,
+  api, el, clear, stat, table, badge, baht, thaiDate, todayISO, can, CONTRACT_TYPE,
 } from '../core.js';
 
 // โซนที่เลือกดูล่าสุด — จำไว้ระหว่างการรีเฟรชหน้า dashboard ในเซสชันเดียวกัน
@@ -121,44 +121,65 @@ export async function renderDashboard() {
     ),
   );
 
-  // ตารางลูกหนี้ที่ต้องเก็บวันนี้ พร้อมปุ่มรับชำระ
-  const rows = d.due_today.map((r) =>
-    el(
-      'tr',
-      {},
-      el('td', {}, el('a', { href: `#/debtors/${r.debtor_id}` }, r.debtor_name),
-        el('div', { class: 'small muted' }, `${r.debtor_code} · ${r.contract_no}`)),
-      el('td', { class: 'small' }, r.phone ?? '-'),
-      el('td', { class: 'num' }, baht(r.due_remaining)),
-      el('td', { class: 'num' }, r.arrears_amount > 0 ? baht(r.arrears_amount) : '-'),
-      el('td', {}, r.overdue_count > 0 ? badge('overdue', `ค้าง ${r.overdue_count} งวด`) : badge('normal', 'ปกติ')),
-      el(
-        'td',
-        {},
-        can('payments_create')
-          ? el('a', { href: `#/collect/${r.contract_id}`, class: 'btn sm', style: 'text-decoration:none' }, 'รับชำระ')
-          : null,
-      ),
-    ),
-  );
+  // สถานะละเอียดของลูกหนี้ในวันนี้ (สเปกข้อ 43)
+  // หมายเหตุ: รายที่จ่ายเต็มงวดแล้วจะหลุดจากรายการนี้เอง (งวดปิด) จึงไม่มีป้าย "จ่ายแล้ว" ในตารางนี้
+  const rowStatus = (r) => {
+    if (r.is_holiday > 0) return { kind: 'disabled', label: 'วันหยุด' };
+    if (r.free_pay_today > 0) return { kind: 'partial', label: 'จ่ายฟรี' };
+    if (r.paid_today > 0) return { kind: 'partial', label: 'จ่ายบางส่วน' };
+    if (r.overdue_count > 0) return { kind: 'overdue', label: `ค้าง ${r.overdue_count} งวด` };
+    return { kind: 'normal', label: 'ยังไม่เก็บ' };
+  };
+
+  // ตัวกรอง (สเปกข้อ 43): ประเภทสัญญา + ค้นหา ชื่อ/รหัส
+  const typeFilter = el('select', { style: 'width:auto' },
+    el('option', { value: '' }, 'ทุกประเภท'),
+    el('option', { value: 'daily24' }, 'รายวัน'),
+    el('option', { value: 'monthly' }, 'รายเดือน'),
+    el('option', { value: 'floating' }, 'ดอกลอย'));
+  const search = el('input', { type: 'search', placeholder: 'ค้นหา ชื่อ / รหัสลูกหนี้', style: 'width:auto' });
+  const tableBox = el('div', {});
+
+  const drawRows = () => {
+    const tf = typeFilter.value;
+    const q = search.value.trim().toLowerCase();
+    const filtered = d.due_today.filter((r) =>
+      (!tf || r.type === tf) &&
+      (!q || r.debtor_name.toLowerCase().includes(q) || (r.debtor_code ?? '').toLowerCase().includes(q)));
+    const rows = filtered.map((r) => {
+      const st = rowStatus(r);
+      return el('tr', {},
+        el('td', {}, el('a', { href: `#/debtors/${r.debtor_id}` }, r.debtor_name),
+          el('div', { class: 'small muted' }, `${r.debtor_code} · ${r.contract_no}`)),
+        el('td', { class: 'small' }, CONTRACT_TYPE[r.type] ?? r.type),
+        el('td', { class: 'small' }, r.phone ?? '-'),
+        el('td', { class: 'num' }, baht(r.due_remaining)),
+        el('td', { class: 'num' }, r.arrears_amount > 0 ? baht(r.arrears_amount) : '-'),
+        el('td', {}, badge(st.kind, st.label)),
+        el('td', {},
+          can('payments_create') && r.is_holiday === 0
+            ? el('a', { href: `#/collect/${r.contract_id}`, class: 'btn sm', style: 'text-decoration:none' }, 'รับชำระ')
+            : null),
+      );
+    });
+    clear(tableBox).append(
+      table(['ลูกหนี้', 'ประเภท', 'เบอร์โทร', { label: 'ยอดที่ควรจ่าย', num: true },
+             { label: 'ยอดค้างสะสม', num: true }, 'สถานะ', ''],
+        rows, 'วันนี้ไม่มีลูกหนี้ที่ต้องเก็บ'),
+    );
+  };
+  typeFilter.addEventListener('change', drawRows);
+  search.addEventListener('input', drawRows);
+  drawRows();
 
   wrap.append(
     el(
       'div',
       { class: 'card' },
-      el('h3', {}, `ลูกหนี้ที่ต้องเก็บวันนี้ (${d.due_today.length} ราย)`),
-      table(
-        [
-          'ลูกหนี้',
-          'เบอร์โทร',
-          { label: 'ยอดที่ควรจ่าย', num: true },
-          { label: 'ยอดค้างสะสม', num: true },
-          'สถานะ',
-          '',
-        ],
-        rows,
-        'วันนี้ไม่มีลูกหนี้ที่ต้องเก็บ',
-      ),
+      el('div', { class: 'rowline' },
+        el('h3', { style: 'margin:0' }, `ลูกหนี้ที่ต้องเก็บวันนี้ (${d.due_today.length} ราย)`),
+        el('div', { class: 'searchbar no-print', style: 'flex:none;width:auto;gap:.4rem' }, typeFilter, search)),
+      tableBox,
     ),
   );
 

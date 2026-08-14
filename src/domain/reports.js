@@ -248,7 +248,20 @@ export async function dueToday({ date = today(), employeeId = null, limit = 500 
                  AND (x.interest_paid < x.interest_due OR x.principal_paid < x.principal_due)) AS overdue_count,
             (SELECT COALESCE(SUM(x.due_amount - x.interest_paid - x.principal_paid), 0) FROM installments x
                WHERE x.contract_id = c.id AND x.due_date < :date
-                 AND (x.interest_paid < x.interest_due OR x.principal_paid < x.principal_due)) AS arrears_amount
+                 AND (x.interest_paid < x.interest_due OR x.principal_paid < x.principal_due)) AS arrears_amount,
+            -- จ่ายจริงของสัญญานี้ในวันนี้ (แยกสถานะ จ่ายแล้ว/บางส่วน)
+            (SELECT COALESCE(SUM(p.amount_paid), 0) FROM payments p
+               WHERE p.contract_id = c.id AND p.is_void = 0 AND p.paid_date = :date) AS paid_today,
+            -- จ่ายฟรีของสัญญานี้ในวันนี้
+            (SELECT COALESCE(SUM(f.amount), 0) FROM income_entries f
+               WHERE f.contract_id = c.id AND f.is_void = 0 AND f.entry_date = :date
+                 AND f.category = 'จ่ายฟรี/พักงวด') AS free_pay_today,
+            -- วันนี้เป็นวันหยุดของสัญญานี้ไหม (ทั้งระบบ/โซน/สัญญา)
+            (SELECT COUNT(*) FROM holidays h
+               WHERE h.holiday_date = :date
+                 AND (h.scope = 'all'
+                      OR (h.scope = 'employee' AND h.employee_id = c.employee_id)
+                      OR (h.scope = 'contract' AND h.contract_id = c.id))) AS is_holiday
      FROM installments i
      JOIN contracts c ON c.id = i.contract_id
      JOIN debtors d   ON d.id = c.debtor_id
@@ -528,4 +541,69 @@ export async function employeeDayClose(date, employeeId = null) {
   );
 
   return { date, rows, total };
+}
+
+/**
+ * รายงานรายการเงินแยกประเภทที่สเปกข้อ 44 ต้องการเพิ่ม:
+ * จ่ายฟรีสะสม, ตัดต้น(ดอกลอย), ถอนดอกเบี้ย/ดอกลอย, ค่าทำสัญญา
+ * รวมยอดในช่วงเวลา + รายการล่าสุด กรองตามโซนได้
+ */
+export async function moneyBreakdownReport({ from, to, employeeId = null }) {
+  const empInc = employeeId
+    ? 'AND EXISTS (SELECT 1 FROM contracts c WHERE c.id = i.contract_id AND c.employee_id = :emp)'
+    : '';
+  const empPayJoin = employeeId ? 'AND c.employee_id = :emp' : '';
+  const empExp = employeeId ? 'AND x.employee_id = :emp' : '';
+  const params = { from, to, emp: employeeId };
+
+  const [freePay, principalCut, withdrawals, docFees] = await Promise.all([
+    // จ่ายฟรีสะสม (สเปกข้อ 22 — รายงานภาพรวม)
+    get(
+      `SELECT COALESCE(SUM(i.amount), 0) AS total, COUNT(*) AS n
+       FROM income_entries i
+       WHERE i.is_void = 0 AND i.category = 'จ่ายฟรี/พักงวด'
+         AND i.entry_date BETWEEN :from AND :to ${empInc}`,
+      params,
+    ),
+    // ตัดต้น (เงินต้นที่รับคืน แยกดอกลอยกับสัญญาปกติ)
+    get(
+      `SELECT
+         COALESCE(SUM(CASE WHEN c.type = 'floating' THEN p.principal_amount ELSE 0 END), 0) AS floating_cut,
+         COALESCE(SUM(CASE WHEN c.type <> 'floating' THEN p.principal_amount ELSE 0 END), 0) AS normal_cut
+       FROM payments p JOIN contracts c ON c.id = p.contract_id
+       WHERE p.is_void = 0 AND p.paid_date BETWEEN :from AND :to ${empPayJoin}`,
+      params,
+    ),
+    // ถอนดอกเบี้ย/ดอกลอย
+    get(
+      `SELECT
+         COALESCE(SUM(CASE WHEN x.category = 'ถอนดอกเบี้ยออกใช้' THEN x.amount ELSE 0 END), 0) AS interest,
+         COALESCE(SUM(CASE WHEN x.category = 'ถอนรายได้ดอกลอยออกใช้' THEN x.amount ELSE 0 END), 0) AS floating
+       FROM expenses x
+       WHERE x.is_void = 0 AND x.entry_date BETWEEN :from AND :to ${empExp}`,
+      params,
+    ),
+    // ค่าทำสัญญา (รับแทน/จ่ายให้พนักงาน)
+    get(
+      `SELECT
+         (SELECT COALESCE(SUM(i.amount),0) FROM income_entries i
+            WHERE i.is_void = 0 AND i.category = 'doc_fee'
+              AND i.entry_date BETWEEN :from AND :to ${empInc}) AS collected,
+         (SELECT COALESCE(SUM(x.amount),0) FROM expenses x
+            WHERE x.is_void = 0 AND x.category = 'จ่ายค่าทำสัญญาให้พนักงาน'
+              AND x.entry_date BETWEEN :from AND :to ${empExp}) AS paid_out`,
+      params,
+    ),
+  ]);
+
+  return {
+    from, to,
+    free_pay: { total: Number(freePay.total), count: Number(freePay.n) },
+    principal_cut: {
+      floating: Number(principalCut.floating_cut),
+      normal: Number(principalCut.normal_cut),
+    },
+    withdrawals: { interest: Number(withdrawals.interest), floating: Number(withdrawals.floating) },
+    doc_fee: { collected: Number(docFees.collected), paid_out: Number(docFees.paid_out) },
+  };
 }

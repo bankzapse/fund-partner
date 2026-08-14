@@ -1,6 +1,6 @@
 // ตั้งค่าระบบ, คำขออนุมัติ, Audit Log และการสำรองข้อมูล — SRS ข้อ 4, 12, 15
 import {
-  api, state, el, clear, table, field, toast, toastError, toSatang,
+  api, state, el, clear, table, field, toast, toastError, toSatang, thaiDate,
 } from '../core.js';
 
 export async function renderSettings() {

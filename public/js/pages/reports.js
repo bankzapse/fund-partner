@@ -10,6 +10,7 @@ const TABS = [
   { key: 'yearly', label: 'รายปี' },
   { key: 'employees', label: 'พนักงาน' },
   { key: 'closing', label: 'ปิดยอดพนักงาน' },
+  { key: 'breakdown', label: 'จ่ายฟรี/ถอน/ค่าทำสัญญา' },
   { key: 'overdue', label: 'ค้างชำระ' },
   { key: 'reyod', label: 'ประวัติรียอด' },
   { key: 'profit', label: 'กำไรขาดทุน', cap: 'profit_view' },
@@ -90,6 +91,7 @@ async function renderTab(tab, q, inputs) {
   if (tab === 'yearly') return yearlyTab(inputs.yearInput.value);
   if (tab === 'employees') return employeeTab(q);
   if (tab === 'closing') return employeeClosingTab(inputs.dateInput.value);
+  if (tab === 'breakdown') return moneyBreakdownTab(q);
   if (tab === 'overdue') return overdueTab();
   if (tab === 'reyod') return reyodTab(q);
   if (tab === 'profit') return profitTab(q);
@@ -133,6 +135,34 @@ async function employeeClosingTab(date) {
       ],
       'ไม่มีพนักงานที่ใช้งานอยู่',
     ),
+  );
+}
+
+/** รายการเงินแยกประเภท (สเปกข้อ 44): จ่ายฟรี/ตัดต้น/ถอน/ค่าทำสัญญา */
+async function moneyBreakdownTab(q) {
+  const d = await api.get(`/api/reports/money-breakdown?${q}`);
+  const line = (label, value, note) =>
+    el('div', { class: 'kv' },
+      el('span', { class: 'k' }, label),
+      el('span', { class: 'v' }, baht(value)),
+      note ? el('span', { class: 'small muted', style: 'margin-left:.5rem' }, note) : null);
+  return el(
+    'div',
+    { class: 'card' },
+    el('h3', {}, 'รายการเงินแยกประเภท'),
+    el('div', { class: 'hint' }, 'สรุปยอดในช่วงที่เลือก — รายการที่สเปกข้อ 44 กำหนดเพิ่มเติม'),
+    el('h4', { style: 'margin:.8rem 0 .3rem' }, 'จ่ายฟรี / พักงวด'),
+    line('จ่ายฟรีสะสม', d.free_pay.total, `${d.free_pay.count} รายการ`),
+    el('h4', { style: 'margin:.8rem 0 .3rem' }, 'ตัดเงินต้น'),
+    line('ตัดต้น — ดอกลอย', d.principal_cut.floating),
+    line('ตัดต้น — สัญญาปกติ', d.principal_cut.normal),
+    el('h4', { style: 'margin:.8rem 0 .3rem' }, 'ถอนเงิน'),
+    line('ถอนดอกเบี้ยตามสัญญา', d.withdrawals.interest),
+    line('ถอนรายได้ดอกลอย', d.withdrawals.floating),
+    el('h4', { style: 'margin:.8rem 0 .3rem' }, 'ค่าทำสัญญา (ของพนักงาน)'),
+    line('รับแทนพนักงานสะสม', d.doc_fee.collected),
+    line('จ่ายให้พนักงานแล้ว', d.doc_fee.paid_out),
+    line('คงค้างจ่ายพนักงาน', d.doc_fee.collected - d.doc_fee.paid_out),
   );
 }
 

@@ -9,7 +9,7 @@ import {
   monthlySeries,
   breakdown,
   monthRange,
-  yearRange,  employeeDayClose,
+  yearRange,  employeeDayClose, moneyBreakdownReport,
 } from '../domain/reports.js';
 import { today } from '../lib/time.js';
 import { wrap, need, scopeEmployeeId, intParam, sendCsv } from './_helpers.js';
@@ -142,6 +142,17 @@ router.get(
 );
 
 /** กำไรขาดทุน (ข้อ 16) — เงินต้นรับคืนไม่ถูกนับเป็นรายได้ (เกณฑ์ข้อ 18) */
+// รายการเงินแยกประเภทเพิ่มเติม (สเปกข้อ 44): จ่ายฟรี/ตัดต้น/ถอน/ค่าทำสัญญา
+router.get(
+  '/money-breakdown',
+  need('reports_view'),
+  wrap(async (req, res) => {
+    const { from, to } = resolveRange(req.query);
+    const scope = await scopeEmployeeId(req.ctx.user, 'reports_view');
+    res.json(await moneyBreakdownReport({ from, to, employeeId: scope }));
+  }),
+);
+
 // ปิดยอดพนักงานประจำวัน (สเปกข้อ 32) — แยกรายคน/โซน + ยอดรวม
 router.get(
   '/employee-closing',
