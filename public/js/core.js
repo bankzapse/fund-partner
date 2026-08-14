@@ -6,28 +6,79 @@ export const state = {
   settings: {},
 };
 
+// ---- แถบโหลดด้านบน (บอกผู้ใช้ว่ากำลังทำงานทุกครั้งที่กด action) ----------------
+// ทุกการเรียก API วิ่งผ่าน request() จุดเดียว จึงเกาะแถบนี้ครอบคลุมทั้งแอปในที่เดียว
+let inflight = 0;
+let progressTimer = null;
+let progressPct = 0;
+
+function progressBar() {
+  let root = document.getElementById('progress-root');
+  if (!root) {
+    root = el('div', { id: 'progress-root', 'aria-hidden': 'true' }, el('div', { class: 'bar' }));
+    document.body.append(root);
+  }
+  return root;
+}
+
+function startProgress() {
+  const root = progressBar();
+  const bar = root.firstElementChild;
+  root.classList.remove('done');
+  root.classList.add('on');
+  progressPct = 8;
+  bar.style.width = `${progressPct}%`;
+  clearInterval(progressTimer);
+  // ค่อย ๆ ไต่ขึ้นหา ~90% ระหว่างรอ — ไม่ถึง 100 จนกว่างานจะเสร็จจริง
+  progressTimer = setInterval(() => {
+    progressPct = Math.min(90, progressPct + (90 - progressPct) * 0.18);
+    bar.style.width = `${progressPct}%`;
+  }, 180);
+}
+
+function doneProgress() {
+  const root = progressBar();
+  const bar = root.firstElementChild;
+  clearInterval(progressTimer);
+  bar.style.width = '100%';
+  root.classList.remove('on');
+  root.classList.add('done');
+  setTimeout(() => {
+    root.classList.remove('done');
+    bar.style.width = '0%';
+    progressPct = 0;
+  }, 320);
+}
+
 // ---- API --------------------------------------------------------------------
 
 async function request(method, url, body) {
-  const res = await fetch(url, {
-    method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  // 401 จากหน้าอื่นแปลว่า session หมดอายุ ให้เด้งกลับไปเข้าสู่ระบบ
-  // แต่ 401 จากการ "เข้าสู่ระบบ" เองแปลว่ารหัสผ่านผิด ต้องปล่อยข้อความจริงผ่านไป
-  const isLoginRequest = url === '/api/auth/login';
-  if (res.status === 401 && !isLoginRequest) {
-    state.user = null;
-    location.hash = '#/login';
-    throw Object.assign(new Error('กรุณาเข้าสู่ระบบอีกครั้ง'), { status: 401 });
+  inflight += 1;
+  if (inflight === 1) startProgress();
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: body ? { 'Content-Type': 'application/json' } : {},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    // 401 จากหน้าอื่นแปลว่า session หมดอายุ ให้เด้งกลับไปเข้าสู่ระบบ
+    // แต่ 401 จากการ "เข้าสู่ระบบ" เองแปลว่ารหัสผ่านผิด ต้องปล่อยข้อความจริงผ่านไป
+    const isLoginRequest = url === '/api/auth/login';
+    if (res.status === 401 && !isLoginRequest) {
+      state.user = null;
+      location.hash = '#/login';
+      throw Object.assign(new Error('กรุณาเข้าสู่ระบบอีกครั้ง'), { status: 401 });
+    }
+    const text = await res.text();
+    const data = text ? JSON.parse(text) : {};
+    // แนบ data ของ response ไปกับ error ด้วย เผื่อผู้เรียกต้องดูรายละเอียด
+    // (เช่น ธง two_factor_required ตอนเข้าสู่ระบบที่ต้องใช้รหัสยืนยัน 2 ชั้น)
+    if (!res.ok) throw Object.assign(new Error(data.error || 'เกิดข้อผิดพลาด'), { status: res.status, data });
+    return data;
+  } finally {
+    inflight -= 1;
+    if (inflight === 0) doneProgress();
   }
-  const text = await res.text();
-  const data = text ? JSON.parse(text) : {};
-  // แนบ data ของ response ไปกับ error ด้วย เผื่อผู้เรียกต้องดูรายละเอียด
-  // (เช่น ธง two_factor_required ตอนเข้าสู่ระบบที่ต้องใช้รหัสยืนยัน 2 ชั้น)
-  if (!res.ok) throw Object.assign(new Error(data.error || 'เกิดข้อผิดพลาด'), { status: res.status, data });
-  return data;
 }
 
 export const api = {

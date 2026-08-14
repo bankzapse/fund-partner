@@ -446,6 +446,32 @@ input[type='file'] { padding: 0.45rem; font-size: 0.85rem; }
 .toast.err { background: var(--red); }
 .toast.ok { background: var(--green); }
 
+/* ---------- แถบโหลดด้านบน (ทุก action) ---------- */
+
+#progress-root {
+  position: fixed; top: 0; left: 0; right: 0; height: 3px;
+  z-index: 100; pointer-events: none; opacity: 0;
+}
+#progress-root.on { opacity: 1; }
+#progress-root.done { opacity: 0; transition: opacity 0.32s ease; }
+#progress-root .bar {
+  height: 100%; width: 0;
+  background: linear-gradient(90deg, var(--gold), #e6b45a);
+  box-shadow: 0 0 8px rgba(201, 143, 44, 0.65), 0 1px 4px rgba(201, 143, 44, 0.4);
+  transition: width 0.18s ease;
+}
+
+/* ---------- สถานะกำลังคำนวณ (ทับกล่องพรีวิว กันเลขกระพริบ) ---------- */
+.calculating { position: relative; }
+.calculating::after {
+  content: 'กำลังคำนวณ…';
+  position: absolute; inset: 0; z-index: 2;
+  display: grid; place-items: center;
+  background: rgba(255, 255, 255, 0.62);
+  color: var(--slate); font-weight: 600; font-size: 0.9rem;
+  border-radius: inherit; backdrop-filter: blur(1px);
+}
+
 /* ---------- หน้าเข้าสู่ระบบ ---------- */
 
 .login-wrap {

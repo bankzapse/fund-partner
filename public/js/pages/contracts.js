@@ -182,7 +182,74 @@ export async function renderNewContract() {
       : 'คิดครั้งเดียวจากเงินต้น เช่น กู้ 2,000 ดอก 20% = ดอก 400 ยอดหนี้รวม 2,400';
   }
 
-  async function refresh() {
+  // จับกลุ่มงวดที่ค่างวดเท่ากันติดกันเป็นช่วง เพื่อให้ตารางสั้น
+  // เช่น งวด 1–23 = 33.00, งวดสุดท้าย 24 = 53.00 → เหลือ 2 แถว (ตอบโจทย์งวดสุดท้ายไม่เท่า)
+  function scheduleTable(schedule) {
+    const groups = [];
+    for (const row of schedule) {
+      const last = groups[groups.length - 1];
+      if (last && last.amount === row.due_amount) { last.to = row.seq; last.count += 1; }
+      else groups.push({ from: row.seq, to: row.seq, amount: row.due_amount, count: 1 });
+    }
+    const rows = groups.map((g) => el('tr', {},
+      el('td', {}, g.from === g.to ? `งวดที่ ${g.from}` : `งวดที่ ${g.from}–${g.to}`),
+      el('td', { class: 'num' }, `${baht(g.amount)} บาท`),
+      el('td', { class: 'num' }, `${g.count} งวด`),
+    ));
+    return table(['ช่วงงวด', { label: 'ยอดต่องวด', num: true }, { label: 'จำนวน', num: true }], rows);
+  }
+
+  function renderPreview(preview) {
+    const sched = preview.schedule ?? [];
+    // previewBox.append เป็น DOM ดิบ — ต้องกรอง null เอง (ไม่งั้นจะได้ข้อความ "null" โผล่มา)
+    const parts = [
+      el('h3', {}, 'ตรวจสอบก่อนยืนยัน'),
+      ...preview.warnings.map((w) => el('div', { class: 'warn' }, w)),
+      el('div', { class: 'kv' }, el('span', { class: 'k' }, 'เงินต้นตามสัญญา'), el('span', { class: 'v' }, baht(preview.principalAmount))),
+      preview.upfront_interest > 0
+        ? el('div', { class: 'kv' }, el('span', { class: 'k' }, 'หักดอกก่อน'), el('span', { class: 'v' }, `- ${baht(preview.upfront_interest)}`))
+        : null,
+      el('div', { class: 'kv' }, el('span', { class: 'k' }, 'หักค่าทำเอกสาร'), el('span', { class: 'v' }, `- ${baht(preview.doc_fee)}`)),
+      el('div', { class: 'kv' }, el('span', { class: 'k' }, 'หักงวดแรก'), el('span', { class: 'v' }, `- ${baht(preview.first_installment)}`)),
+      el('div', { class: 'kv total' }, el('span', { class: 'k' }, 'เงินที่ลูกค้าได้รับจริง'),
+        el('span', { class: 'v' }, `${baht(preview.cash_to_customer)} บาท`)),
+      el('div', { class: 'kv mt' }, el('span', { class: 'k' }, 'รวมต้องชำระทั้งสัญญา'), el('span', { class: 'v' }, baht(preview.totals.total_due))),
+      el('div', { class: 'kv' }, el('span', { class: 'k' }, 'รวมดอกเบี้ยทั้งสัญญา'), el('span', { class: 'v' }, baht(preview.totals.total_interest))),
+      el('div', { class: 'kv' }, el('span', { class: 'k' }, 'รวมตัดเงินต้นตามตาราง'), el('span', { class: 'v' }, baht(preview.totals.total_principal_scheduled))),
+      // ตารางค่างวด — เห็นชัดว่างวดไหนยอดเท่าไร (โดยเฉพาะงวดสุดท้ายที่รับเศษ)
+      sched.length
+        ? el('div', { class: 'mt' },
+            el('div', { class: 'k', style: 'margin-bottom:.35rem' }, 'ตารางค่างวด'),
+            scheduleTable(sched))
+        : null,
+      sched.length
+        ? el('div', { class: 'hint mt' }, `งวดแรกครบกำหนด ${thaiDate(sched[0].due_date)} · งวดสุดท้าย ${thaiDate(sched.at(-1).due_date)}`)
+        : null,
+    ];
+    clear(previewBox).append(...parts.filter(Boolean));
+  }
+
+  let previewSeq = 0;
+  let previewTimer = null;
+
+  async function runPreview() {
+    const seq = ++previewSeq;
+    previewBox.classList.add('calculating');
+    try {
+      const { preview } = await api.post('/api/contracts/preview', body());
+      if (seq !== previewSeq) return; // มีคำขอใหม่กว่าแล้ว ทิ้งผลเก่า กันเลขสลับไปมา
+      submit.disabled = false;
+      renderPreview(preview);
+    } catch (err) {
+      if (seq !== previewSeq) return;
+      submit.disabled = true;
+      clear(previewBox).append(el('div', { class: 'warn' }, err.message));
+    } finally {
+      if (seq === previewSeq) previewBox.classList.remove('calculating');
+    }
+  }
+
+  function refresh() {
     syncMode();
     // ดอกลอย: ค่างวด = ดอกเบี้ยต่อวัน และปฏิทินเก็บดอกล่วงหน้า 1 ปี (ไม่ใช่วันครบสัญญา)
     installment.disabled = typeSel.value === 'floating';
@@ -192,33 +259,15 @@ export async function renderNewContract() {
     }
 
     if (!debtorSel.value) {
+      previewSeq += 1; // ยกเลิกผลที่ค้างอยู่
+      previewBox.classList.remove('calculating');
       clear(previewBox).append(el('div', { class: 'empty' }, 'เลือกลูกหนี้เพื่อดูตัวอย่างการคำนวณ'));
       submit.disabled = true;
       return;
     }
-    try {
-      const { preview } = await api.post('/api/contracts/preview', body());
-      submit.disabled = false;
-      clear(previewBox).append(
-        el('h3', {}, 'ตรวจสอบก่อนยืนยัน'),
-        ...preview.warnings.map((w) => el('div', { class: 'warn' }, w)),
-        el('div', { class: 'kv' }, el('span', { class: 'k' }, 'เงินต้นตามสัญญา'), el('span', { class: 'v' }, baht(preview.principalAmount))),
-        preview.upfront_interest > 0
-          ? el('div', { class: 'kv' }, el('span', { class: 'k' }, 'หักดอกก่อน'), el('span', { class: 'v' }, `- ${baht(preview.upfront_interest)}`))
-          : null,
-        el('div', { class: 'kv' }, el('span', { class: 'k' }, 'หักค่าทำเอกสาร'), el('span', { class: 'v' }, `- ${baht(preview.doc_fee)}`)),
-        el('div', { class: 'kv' }, el('span', { class: 'k' }, 'หักงวดแรก'), el('span', { class: 'v' }, `- ${baht(preview.first_installment)}`)),
-        el('div', { class: 'kv total' }, el('span', { class: 'k' }, 'เงินที่ลูกค้าได้รับจริง'),
-          el('span', { class: 'v' }, `${baht(preview.cash_to_customer)} บาท`)),
-        el('div', { class: 'kv mt' }, el('span', { class: 'k' }, 'รวมต้องชำระทั้งสัญญา'), el('span', { class: 'v' }, baht(preview.totals.total_due))),
-        el('div', { class: 'kv' }, el('span', { class: 'k' }, 'รวมดอกเบี้ยทั้งสัญญา'), el('span', { class: 'v' }, baht(preview.totals.total_interest))),
-        el('div', { class: 'kv' }, el('span', { class: 'k' }, 'รวมตัดเงินต้นตามตาราง'), el('span', { class: 'v' }, baht(preview.totals.total_principal_scheduled))),
-        el('div', { class: 'hint mt' }, `งวดแรกครบกำหนด ${thaiDate(preview.schedule[0].due_date)} · งวดสุดท้าย ${thaiDate(preview.schedule.at(-1).due_date)}`),
-      );
-    } catch (err) {
-      submit.disabled = true;
-      clear(previewBox).append(el('div', { class: 'warn' }, err.message));
-    }
+    // หน่วงจนพิมพ์เสร็จก่อนค่อยคำนวณ — ไม่ยิงทุกตัวอักษร (กันเลขกระพริบ)
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(runPreview, 250);
   }
 
   for (const input of [debtorSel, typeSel, modeSel, ratePct, principal, installment, interest, periods, startDate, docFee, deductFirst]) {
