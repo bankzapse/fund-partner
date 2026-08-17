@@ -329,6 +329,10 @@ async function normalizeContractInput(input) {
 
   // อ่านโหมดก่อนตรวจค่าอื่น เพราะโหมดที่คิดจากอัตรา % (เหมารวม/หักดอกก่อน)
   // ผู้ใช้ไม่ได้กรอกดอกต่องวดกับค่างวดมาเลย ระบบคำนวณให้เองจากอัตรา
+  // โหมดที่ส่งมาผิด (สะกดผิด) ต้องบอกชัด ไม่ปล่อยตกไป per_installment เงียบ ๆ
+  if (input.interestMode && !['flat_total', 'deduct_upfront', 'per_installment'].includes(input.interestMode)) {
+    throw new BusinessError('วิธีคิดดอกเบี้ยไม่ถูกต้อง');
+  }
   const interestMode =
     input.interestMode === 'flat_total' ? 'flat_total'
     : input.interestMode === 'deduct_upfront' ? 'deduct_upfront'

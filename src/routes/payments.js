@@ -158,11 +158,15 @@ router.post(
     if (!contract) return res.status(404).json({ error: 'ไม่พบสัญญา' });
     await assertDebtorAccess(req.ctx.user, contract.debtor_id, 'payments_create');
 
+    // ยอดรับต้องมากกว่า 0 — สอดคล้องกับจ่ายฟรี (กันสร้างใบรับเงิน 0 บาทเปล่า ๆ กินเลขที่ใบรับ)
+    const amountPaid = intParam(req.body?.amount_paid, 0);
+    if (amountPaid <= 0) return res.status(400).json({ error: 'ยอดจ่ายจริงต้องมากกว่า 0' });
+
     const proof = req.body?.proof_data_url ? await saveDataUrl(req.body.proof_data_url, 'receipt') : null;
     const payment = await recordPayment(
       {
         contractId,
-        amountPaid: intParam(req.body?.amount_paid, 0),
+        amountPaid,
         paidDate: req.body?.paid_date,
         note: req.body?.note,
         proofPath: proof?.path ?? null,

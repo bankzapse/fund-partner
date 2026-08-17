@@ -6,6 +6,7 @@ import { audit, auditTrail, accessTrail } from '../lib/audit.js';
 import { ROLES, MATRIX } from '../lib/permissions.js';
 import { voidPayment } from '../domain/payments.js';
 import { reyod, cancelContract } from '../domain/contracts.js';
+import { assertNonNegative } from '../lib/money.js';
 import { wrap, need, intParam } from './_helpers.js';
 import { lockedAccounts, unlockUser } from '../lib/login-guard.js';
 import { reset2FA } from '../lib/twofactor.js';
@@ -194,9 +195,9 @@ router.post(
           phone: b.phone ?? null,
           area: b.area ?? null,
           sup: b.supervisor_id ?? null,
-          wage: intParam(b.wage_amount, 0),
+          wage: assertNonNegative(intParam(b.wage_amount, 0), 'ค่าแรง'),
           wagePeriod: b.wage_period === 'monthly' ? 'monthly' : 'daily',
-          fuel: intParam(b.fuel_amount, 0),
+          fuel: assertNonNegative(intParam(b.fuel_amount, 0), 'ค่าน้ำมัน'),
           fuelPeriod: b.fuel_period === 'monthly' ? 'monthly' : 'daily',
           now,
         },
@@ -231,9 +232,9 @@ router.put(
         sup: b.supervisor_id === undefined ? before.supervisor_id : b.supervisor_id,
         active: b.is_active === undefined ? before.is_active : b.is_active ? 1 : 0,
         // อัตราค่าแรง/น้ำมัน (สเปกข้อ 30-31) — 0 = จ่ายตามจริง/กรอกเอง
-        wage: b.wage_amount === undefined ? before.wage_amount : intParam(b.wage_amount, 0),
+        wage: b.wage_amount === undefined ? before.wage_amount : assertNonNegative(intParam(b.wage_amount, 0), 'ค่าแรง'),
         wagePeriod: b.wage_period === undefined ? before.wage_period : (b.wage_period === 'monthly' ? 'monthly' : 'daily'),
-        fuel: b.fuel_amount === undefined ? before.fuel_amount : intParam(b.fuel_amount, 0),
+        fuel: b.fuel_amount === undefined ? before.fuel_amount : assertNonNegative(intParam(b.fuel_amount, 0), 'ค่าน้ำมัน'),
         fuelPeriod: b.fuel_period === undefined ? before.fuel_period : (b.fuel_period === 'monthly' ? 'monthly' : 'daily'),
         now: nowISO(),
       },
