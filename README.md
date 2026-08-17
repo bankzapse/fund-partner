@@ -80,7 +80,8 @@ Push เข้า `main` → Vercel deploy อัตโนมัติ (CI ร�
 
 ## เอกสารเพิ่มเติม (`docs/`)
 
+- [requirement-gap-51.md](docs/requirement-gap-51.md) — เทียบสเปกใหม่ 51 ข้อ กับระบบจริง (ครบทุกข้อ)
+- [scope-vs-srs.md](docs/scope-vs-srs.md) — เทียบ SRS เดิม 20 ข้อ กับที่ส่งมอบ
 - [security-hardening.md](docs/security-hardening.md) — สรุปมาตรการความปลอดภัย
 - [storage-private-bucket.md](docs/storage-private-bucket.md) — ตั้งค่า Supabase Storage เป็น private
 - [legal-checklist.md](docs/legal-checklist.md) — ประเด็นกฎหมายสำหรับทนาย
-- [scope-vs-srs.md](docs/scope-vs-srs.md) — เทียบ SRS กับที่ส่งมอบ

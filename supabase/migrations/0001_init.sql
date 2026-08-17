@@ -371,7 +371,8 @@ BEGIN
   FOREACH t IN ARRAY ARRAY[
     'users','sessions','employees','debtors','debtor_documents','contracts',
     'contract_links','installments','payments','expenses','income_entries',
-    'daily_closings','audit_logs','settings','counters','approvals','login_attempts'
+    'daily_closings','audit_logs','settings','counters','approvals','login_attempts',
+    'holidays'
   ] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
   END LOOP;
