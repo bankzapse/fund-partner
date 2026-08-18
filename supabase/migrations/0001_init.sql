@@ -364,16 +364,15 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_recovery TEXT;
 -- เข้าถึงข้อมูลการเงินได้โดยตรงจากฝั่งเบราว์เซอร์
 --
 -- บังคับจากตัวแอปเอง ไม่พึ่งการตั้งค่าในหน้าจอ Supabase เพื่อให้ปลอดภัยเสมอ
+--
+-- เปิด RLS ให้ "ทุกตาราง" ใน public แบบไดนามิก — ตารางที่เพิ่มใหม่ภายหลังถูกครอบเองเสมอ
+-- (เดิมเป็นรายชื่อ hardcode ทำให้ตารางใหม่ตกหล่นได้ เช่น holidays) · ALTER ENABLE เป็น
+-- idempotent เรียกซ้ำทุกครั้งที่ต่อ DB ได้ · มีเทสต์ tests/rls.test.js กันตกหล่นอีกชั้น
 -- ---------------------------------------------------------------------------
 DO $$
 DECLARE t text;
 BEGIN
-  FOREACH t IN ARRAY ARRAY[
-    'users','sessions','employees','debtors','debtor_documents','contracts',
-    'contract_links','installments','payments','expenses','income_entries',
-    'daily_closings','audit_logs','settings','counters','approvals','login_attempts',
-    'holidays'
-  ] LOOP
-    EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+  FOR t IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
   END LOOP;
 END $$;
