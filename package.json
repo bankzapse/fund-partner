@@ -14,6 +14,7 @@
     "test": "FP_DB_PATH=:memory: node --test tests/*.test.js",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
+    "sync:migration": "node scripts/sync-migration.mjs",
     "vercel-build": "echo no build step"
   },
   "dependencies": {

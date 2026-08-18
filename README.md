@@ -64,8 +64,9 @@ docs/                 เอกสารเพิ่มเติม (ดูด�
 
 - ชุดทดสอบใช้ `node --test` + PGlite (ไม่ต้องมีฐานข้อมูลจริง)
 - **CI**: [.github/workflows/ci.yml](.github/workflows/ci.yml) รัน `lint` + `test` ทุก push/PR บน Node 22.x และ 24.x
-- แก้ `schema.sql` แล้ว **ต้อง regenerate** `supabase/migrations/0001_init.sql` ให้ตรงกัน
-  (schema.sql รันซ้ำทุกครั้งที่ต่อ DB ทุกบรรทัดจึงต้อง idempotent — ใช้ `ADD COLUMN IF NOT EXISTS`)
+- แก้ `schema.sql` แล้ว **ต้อง regenerate** migration ด้วย `npm run sync:migration`
+  (มี `tests/migration-sync.test.js` เป็นด่านใน CI — ลืม regenerate แล้ว CI แดงทันที)
+  schema.sql รันซ้ำทุกครั้งที่ต่อ DB ทุกบรรทัดจึงต้อง idempotent — ใช้ `ADD COLUMN IF NOT EXISTS`
 
 ## ความปลอดภัย (สรุป)
 
